@@ -1,4 +1,4 @@
-import {test} from 'node:test';
+import {test} from 'vitest';
 import assert from 'node:assert/strict';
 import {assertResource,checkWrite,isSeries,prepareCalendar,sameResource,creationResult} from '../src/safety';
 test('reject resources outside the discovered calendar',()=> {

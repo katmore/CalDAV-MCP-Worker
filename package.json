@@ -11,26 +11,29 @@
     "start": "wrangler dev -c wrangler.local.jsonc",
     "cf-typegen": "wrangler types",
     "type-check": "tsc --noEmit",
-    "test": "node scripts/vendor.mjs check && node --import tsx --test test/*.test.ts",
+    "test": "node scripts/vendor.mjs check && vitest run",
     "vendor:check": "node scripts/vendor.mjs check",
     "vendor:update": "node scripts/vendor.mjs update",
-    "vendor:verify": "node scripts/vendor.mjs verify"
+    "vendor:verify": "node scripts/vendor.mjs verify",
+    "coverage": "node scripts/vendor.mjs check && vitest run --coverage"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.8.3",
+    "@modelcontextprotocol/server": "2.3.1",
     "agents": "0.29.0",
     "hono": "4.13.13",
     "ical.js": "2.2.1",
     "just-pick": "4.2.0",
     "octokit": "5.0.5",
     "tsdav": "2.5.0",
-    "zod": "4.6.7",
-    "@modelcontextprotocol/server": "2.3.1"
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.6",
     "@cloudflare/workers-types": "5.20261021.1",
-    "tsx": "4.23.15",
+    "@vitest/coverage-istanbul": "4.1.12",
     "typescript": "6.0.3",
+    "vitest": "4.1.12",
     "wrangler": "4.151.3"
   },
   "license": "MIT"
