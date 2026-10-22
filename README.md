@@ -78,10 +78,12 @@ MCP client ──OAuth──▶ Cloudflare Worker ──CalDAV (username + passw
 
 - The CalDAV credentials usually grant broader access than these six tools
   (often the whole account's calendars, and sometimes contacts).
-- The `/register` and `/authorize` endpoints are public, so anyone can register
-  an MCP client and start a login; the GitHub allowlist is the only access
-  control. Before clicking Approve, check the client name and redirect URIs,
-  and never approve a link you didn't start.
+- Only your GitHub account can sign in, but anyone can start a sign-in. That
+  leaves one risk: someone sends you a link to connect *their* app to your
+  Worker, and if you click Approve and sign in, their app gets access to your
+  calendar. Only approve the connection page right after you've started
+  connecting your own assistant, and check that the app name on it is the one
+  you expect.
 - No secrets are embedded in OAuth props, and the upstream GitHub access token
   is not retained. Tool errors don't include exception details or credentials.
 - Request observability is disabled.
