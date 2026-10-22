@@ -18,15 +18,21 @@ nothing runs on your computer, and only you can sign in.
 
 Any CalDAV server that accepts a username and password at an `https://`
 address should work; plain `http://` servers are not supported. Set
-`CALDAV_URL` to your provider's address:
+`CALDAV_URL` to your provider's address.
 
-| Provider | `CALDAV_URL` | Password to use |
-| --- | --- | --- |
-| Apple iCloud | `https://caldav.icloud.com` | [App-specific password](#app-specific-password) from account.apple.com |
-| Fastmail | `https://caldav.fastmail.com` | App password from Fastmail settings |
-| Yahoo Calendar | `https://caldav.calendar.yahoo.com` | App password from Yahoo account security |
-| Nextcloud | `https://<your-server>/remote.php/dav` | App password from Nextcloud security settings |
-| Radicale, Baïkal and other self-hosted servers | Your server's CalDAV URL | Your account password |
+Your username and password are only ever sent over https, and only to the
+`CALDAV_URL` host and any hosts you list in `CALDAV_TRUSTED_HOSTS`. Some
+providers hand you on to another server after the first request; iCloud does
+(to a server such as `p42-caldav.icloud.com`), so it needs `.icloud.com` there.
+A leading dot trusts that domain and everything under it.
+
+| Provider | `CALDAV_URL` | `CALDAV_TRUSTED_HOSTS` | Password to use |
+| --- | --- | --- | --- |
+| Apple iCloud | `https://caldav.icloud.com` | `.icloud.com` | [App-specific password](#app-specific-password) from account.apple.com |
+| Fastmail | `https://caldav.fastmail.com` | none | App password from Fastmail settings |
+| Yahoo Calendar | `https://caldav.calendar.yahoo.com` | none | App password from Yahoo account security |
+| Nextcloud | `https://<your-server>/remote.php/dav` | none | App password from Nextcloud security settings |
+| Radicale, Baïkal and other self-hosted servers | Your server's CalDAV URL | none | Your account password |
 
 iCloud has been tested end to end (see [VALIDATION.md](VALIDATION.md)); the
 others should work but are untested. Google Calendar is not supported: it only
@@ -101,6 +107,10 @@ in itself.
   every calendar on the account, and sometimes contacts. That's why a dedicated
   app-specific password is recommended; you can revoke it at any time without
   changing your main password.
+- Your calendar username and password are only sent over https, to the
+  `CALDAV_URL` host and the hosts in `CALDAV_TRUSTED_HOSTS`. Every request is
+  checked, including addresses the calendar server hands back and each step of
+  a redirect.
 - The Worker doesn't keep your GitHub sign-in token, and its error messages
   never include passwords or internal details.
 - Cloudflare's request logging is turned off for the Worker, so your calendar
@@ -169,7 +179,7 @@ Then edit `wrangler.local.jsonc`:
 
 - `id` under `kv_namespaces`: the id printed by the command above. Leave
   `"binding": "OAUTH_KV"` as it is; the code uses that name.
-- `CALDAV_URL`: your provider's address from the
+- `CALDAV_URL` and, if your provider needs it, `CALDAV_TRUSTED_HOSTS`: from the
   [Supported calendars](#supported-calendars) table.
 - `name` (optional): the Worker's name, which becomes part of its address.
   Choose it now: renaming after the first deploy creates a second Worker and
@@ -320,13 +330,15 @@ calendar you don't mind testing in.
 | --- | --- |
 | "Not authorized" after signing in to GitHub, or "Forbidden" later | You signed in as a different account than `ALLOWED_GITHUB_LOGIN`, or that secret isn't set or was changed |
 | GitHub says the redirect URI isn't valid | The callback URL in the GitHub OAuth app doesn't exactly match your Worker's address plus `/callback` |
-| "CALDAV_URL must be set" | `CALDAV_URL` is empty or missing in `wrangler.local.jsonc`; fix it and deploy again |
+| "CALDAV_URL must be set" or "must be an https:// address" | `CALDAV_URL` in `wrangler.local.jsonc` is missing, empty or not `https://`; fix it and deploy again |
+| "CalDAV operation failed" with reason `TransportError` | The calendar server sent the Worker to an `http://` address or to a host not in `CALDAV_TRUSTED_HOSTS`. For iCloud, set `CALDAV_TRUSTED_HOSTS` to `.icloud.com` |
+| "CALDAV_TRUSTED_HOSTS must list host names" | Use bare host names separated by commas, such as `.icloud.com`, with no `https://` or paths |
 | "CalDAV operation failed" on every request | Wrong `CALDAV_USERNAME`, `CALDAV_PASSWORD` or `CALDAV_URL` (or it's still the `caldav.example.com` placeholder), or your provider requires an app-specific password |
 | `wrangler secret put` offers to create a new Worker | You changed `name` and left out `-c wrangler.local.jsonc`, so it's targeting the placeholder name |
 | `wrangler secret put` offers to create a new Worker, and you did use `-c` | You skipped the deploy in step 3, so the Worker doesn't exist yet |
 
-Sign-in errors appear in your browser; the `CALDAV_URL` and "CalDAV operation
-failed" errors appear in your assistant's replies.
+Sign-in errors appear in your browser; the `CALDAV_URL`, `CALDAV_TRUSTED_HOSTS`
+and "CalDAV operation failed" errors appear in your assistant's replies.
 
 To check the Worker is deployed and responding, without signing in, this
 should return `401 Unauthorized`:

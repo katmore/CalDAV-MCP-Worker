@@ -29,6 +29,7 @@ replaced by fakes, and every secret has a test-only value in
 | `test/calendar.test.ts` | All six calendar tools against a fake calendar server: what is written and where, the version sent with each change, refused saves, edits keeping alarms and unknown fields, the refusal rules for repeating events, all-day events and invitations, the `capped` flag, the 90-day, 250-event and 500-occurrence limits, input validation (including that deletes carry `confirm: "DELETE"`, a cue to the assistant rather than proof of approval), the read-only and destructive markers on each tool, and error messages that hide internal details |
 | `test/oauth-utils.test.ts` | Sign-in building blocks: CSRF tokens, one-time sign-in state tied to the browser that started it, the signed "approved apps" cookie (including forged and foreign cookies), HTML escaping and link filtering on the approval page, and the GitHub token exchange |
 | `test/github-handler.test.ts` | The sign-in pages: approval, the GitHub callback, refusing any GitHub account but the owner, failed GitHub responses, replayed or cross-browser callbacks, and hidden internal errors |
+| `test/transport.test.ts` | The CalDAV network boundary, using the real CalDAV client against a fake network: `CALDAV_URL` must be https; discovery, server-listed addresses and every redirect step stay on https and on trusted hosts; the network is never left to follow redirects unchecked; refusals are reported without addresses or credentials; create, update and delete still send their version checks |
 | `test/index.test.ts` | The whole sign-in end to end, as an MCP client does it: register, approve, sign in through a fake GitHub, exchange the code with PKCE, then list the calendar tools. Also: tokens that are missing, made up or belong to an account no longer allowed; a tampered redirect address; remembered approvals |
 
 ### How the fakes work
@@ -64,8 +65,16 @@ one and confirming a test fails. Each of these 23 breakages was caught:
 
 ### Bugs the tests found
 
-Writing these tests found and fixed:
+Writing these tests, and an outside review, found and fixed:
 
+- **Credentials could be sent over http or to other hosts.** The CalDAV client
+  would send the username and password to an `http://` `CALDAV_URL`, to an
+  `http://` address returned by the server's discovery step, and to any host
+  the server pointed it at. Every CalDAV request now goes through a guarded
+  network function that requires https and a trusted host
+  (`CALDAV_TRUSTED_HOSTS`), and follows redirects itself so each step is
+  checked. The regression tests failed against the old behaviour before the
+  fix.
 - **Timezones leaking between events.** Each event's timezone definitions were
   registered globally, so an event (for example an invitation) could redefine
   a zone such as `Europe/Paris` and shift the times of other events that use
@@ -119,7 +128,8 @@ errors or retries:
 The updated event kept its UID and address, a fresh version was used for the
 update and the deletion, and no other events were changed.
 
-This check predates the timezone and sign-in fixes above. After deploying a
+This check predates the timezone, sign-in and https fixes above, and the https
+fix changes how the Worker reaches iCloud. After deploying a
 new version, repeat it with the prompts in the README's
 [Try it](README.md#7-try-it) step.
 
