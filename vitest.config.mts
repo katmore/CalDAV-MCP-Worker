@@ -26,6 +26,10 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: ['src/env.d.ts'],
       reporter: ['text', 'html'],
+      // Every line, statement and function must be exercised. Branch coverage is
+      // reported but not yet enforced: see the three unreachable branches noted in the
+      // vendored Cloudflare code.
+      thresholds: { lines: 100, statements: 100, functions: 100 },
     },
   },
 });
