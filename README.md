@@ -352,6 +352,11 @@ A separate password your calendar provider generates for one app. It works
 instead of your main password, and you can revoke it on its own at any time.
 Most hosted providers require one for CalDAV.
 
-## License
+## Legal
 
-MIT
+Copyright (c) 2026 D B.
+Portions copyright (c) 2025 Cloudflare, Inc., adapted from the Cloudflare
+starter.
+
+Released under the terms of the MIT License. See [LICENSE](LICENSE) for the
+full text.
