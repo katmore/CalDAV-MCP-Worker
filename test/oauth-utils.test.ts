@@ -97,7 +97,9 @@ describe('OAuth state', () => {
     const { stateToken } = await createOAuthState(reqInfo, env.OAUTH_KV);
     expect(JSON.parse((await env.OAUTH_KV.get(`oauth:state:${stateToken}`))!)).toEqual(reqInfo);
     const listed = await env.OAUTH_KV.list({ prefix: `oauth:state:${stateToken}` });
-    expect(listed.keys[0].expiration).toBeGreaterThan(Date.now() / 1000);
+    const secondsLeft = listed.keys[0].expiration! - Date.now() / 1000;
+    expect(secondsLeft).toBeGreaterThan(0);
+    expect(secondsLeft).toBeLessThanOrEqual(600);
   });
 
   test('binds the state to the browser with a hash, not the token itself', async () => {
@@ -212,7 +214,7 @@ describe('approval dialog', () => {
 
   test('posts the state and CSRF token back to the same path', async () => {
     const html = await render(null).text();
-    expect(html).toContain('<form method="post" action="/authorize">');
+    expect(html).toMatch(/<form[^>]*method="post"[^>]*action="\/authorize"/);
     expect(html).toContain(`name="state" value="${btoa(JSON.stringify({ oauthReqInfo: reqInfo }))}"`);
     expect(html).toContain('name="csrf_token" value="csrf-123"');
   });
@@ -220,7 +222,7 @@ describe('approval dialog', () => {
   test('names an unknown client and omits empty details', async () => {
     const html = await render(null).text();
     expect(html).toContain('Unknown MCP Client');
-    for (const absent of ['class="logo"', 'class="description"', 'Website:', 'Privacy Policy:', 'Terms of Service:', 'Redirect URIs:', 'Contact:']) {
+    for (const absent of ['<img', 'Website:', 'Privacy Policy:', 'Terms of Service:', 'Redirect URIs:', 'Contact:']) {
       expect(html).not.toContain(absent);
     }
   });
@@ -243,10 +245,12 @@ describe('approval dialog', () => {
     expect(html).toContain('https://client.example.test/privacy');
     expect(html).toContain('https://client.example.test/terms');
     expect(html).toContain('a@example.test, &lt;b@example.test&gt;');
-    expect(html).toContain('<div>https://client.example.test/cb</div>');
+    expect(html).toContain('https://client.example.test/cb');
     expect(html).not.toContain('javascript:alert(1)');
-    expect(html).toContain('<img src="https://example.test/logo.png" alt="My &lt;Server&gt; Logo" class="logo">');
-    expect(html).toContain('<p class="description">Desc &amp; more</p>');
+    expect(html).toContain('src="https://example.test/logo.png"');
+    expect(html).toContain('My &lt;Server&gt;');
+    expect(html).not.toContain('My <Server>');
+    expect(html).toContain('Desc &amp; more');
   });
 
   test('drops a logo or client links that are not web URLs', async () => {
@@ -255,7 +259,7 @@ describe('approval dialog', () => {
       { name: 'Server', logo: 'javascript:alert(1)' },
     ).text();
     expect(html).not.toContain('javascript:');
-    expect(html).not.toContain('class="logo"');
+    expect(html).not.toContain('<img');
     expect(html).not.toContain('Contact:');
     expect(html).not.toContain('Redirect URIs:');
   });

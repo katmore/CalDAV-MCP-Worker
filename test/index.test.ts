@@ -16,20 +16,27 @@ const base64url = (bytes: ArrayBuffer | Uint8Array) =>
   btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const cookieValues = (response: Response) => response.headers.getSetCookie().map(c => c.split(';')[0]);
 
-// Fakes GitHub's token endpoint and user API for the signed-in account.
+// Fakes GitHub's token endpoint and user API. Like GitHub, the user API only answers
+// for the token the token endpoint issued.
 function github(login: string) {
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
-    const url = new URL(input instanceof Request ? input.url : String(input));
-    if (url.href === 'https://github.com/login/oauth/access_token') {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    if (request.url === 'https://github.com/login/oauth/access_token') {
       return new Response('access_token=gh-token', { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
     }
-    if (url.href === 'https://api.github.com/user') return Response.json({ login, name: 'Owner Name', email: 'owner@example.test' });
-    throw new Error(`unexpected fetch ${url.href}`);
+    if (request.url === 'https://api.github.com/user') {
+      return /^(token|bearer) gh-token$/i.test(request.headers.get('Authorization') ?? '')
+        ? Response.json({ login, name: 'Owner Name', email: 'owner@example.test' })
+        : Response.json({ message: 'Bad credentials' }, { status: 401 });
+    }
+    throw new Error(`unexpected fetch ${request.url}`);
   });
 }
 
+type SignInOptions = { login?: string; tamperState?: (state: any) => any; keepBinding?: boolean };
+
 // Runs the whole sign-in as an MCP client would: register, approve, GitHub, token.
-async function signIn(login = 'owner') {
+async function signIn({ login = 'owner', tamperState, keepBinding = true }: SignInOptions = {}) {
   const registered = await call(new Request(`${BASE}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -50,18 +57,22 @@ async function signIn(login = 'owner') {
   const html = await page.text();
   const field = (name: string) => html.match(new RegExp(`name="${name}" value="([^"]+)"`))![1];
 
+  const state0 = tamperState ? btoa(JSON.stringify(tamperState(JSON.parse(atob(field('state')))))) : field('state');
   const approved = await call(new Request(`${BASE}/authorize`, {
     method: 'POST',
     headers: { Cookie: cookieValues(page).join('; ') },
-    body: new URLSearchParams({ state: field('state'), csrf_token: field('csrf_token') }),
+    body: new URLSearchParams({ state: state0, csrf_token: field('csrf_token') }),
   }));
   expect(approved.status).toBe(302);
   const state = new URL(approved.headers.get('Location')!).searchParams.get('state')!;
 
+  const approvedCookies = cookieValues(approved);
+  const bindingOnly = approvedCookies.filter(c => c.startsWith('__Host-CONSENTED_STATE='));
   github(login);
-  const callback = await call(new Request(`${BASE}/callback?code=gh-code&state=${state}`, { headers: { Cookie: cookieValues(approved).join('; ') } }));
+  const callback = await call(new Request(`${BASE}/callback?code=gh-code&state=${state}`, { headers: keepBinding ? { Cookie: bindingOnly.join('; ') } : {} }));
   vi.restoreAllMocks();
-  if (callback.status !== 302) return { callback };
+  const result = { callback, approvedCookies, authorizeUrl };
+  if (callback.status !== 302) return result;
   const redirect = new URL(callback.headers.get('Location')!);
   expect(redirect.origin + redirect.pathname).toBe(CLIENT_CB);
   expect(redirect.searchParams.get('state')).toBe('client-state');
@@ -72,7 +83,7 @@ async function signIn(login = 'owner') {
   }));
   expect(token.status).toBe(200);
   const { access_token } = await token.json() as { access_token: string };
-  return { callback, accessToken: access_token };
+  return { ...result, accessToken: access_token };
 }
 
 const rpc = (accessToken: string | undefined, method: string, params: unknown = {}) =>
@@ -109,8 +120,26 @@ describe('Worker entry point', () => {
   });
 
   test('does not let another GitHub account finish signing in', async () => {
-    const { callback } = await signIn('someone-else');
+    const { callback } = await signIn({ login: 'someone-else' });
     expect(callback.status).toBe(403);
+  });
+
+  test('does not finish a sign-in in a browser that did not start it', async () => {
+    const { callback } = await signIn({ keepBinding: false });
+    expect(callback.status).toBe(400);
+  });
+
+  test('never sends a sign-in code to an address the client did not register', async () => {
+    const attacker = 'https://attacker.example.test/steal';
+    const { callback } = await signIn({ tamperState: s => ({ ...s, oauthReqInfo: { ...s.oauthReqInfo, redirectUri: attacker } }) });
+    expect(callback.headers.get('Location') ?? '').not.toContain('attacker.example.test');
+    expect(callback.status).not.toBe(302);
+  });
+
+  test('rejects a made-up or malformed access token', async () => {
+    for (const token of ['not-a-real-token', 'a:b:c']) {
+      expect((await call(rpc(token, 'tools/list'))).status, token).toBe(401);
+    }
   });
 
   describe('after the owner signs in', () => {
@@ -124,6 +153,14 @@ describe('Worker entry point', () => {
       expect(result.tools.map((t: { name: string }) => t.name).sort()).toEqual(
         ['create_event', 'delete_event', 'get_event', 'list_calendars', 'list_events', 'update_event'],
       );
+    });
+
+    test('remembers the approval, sending the next visit straight to GitHub', async () => {
+      const { approvedCookies, authorizeUrl } = await signIn();
+      const approval = approvedCookies.filter(c => c.startsWith('__Host-APPROVED_CLIENTS='));
+      const again = await call(new Request(authorizeUrl, { headers: { Cookie: approval.join('; ') } }));
+      expect(again.status).toBe(302);
+      expect(again.headers.get('Location')).toMatch(/^https:\/\/github\.com\/login\/oauth\/authorize\?/);
     });
 
     test('refuses the token once that account is no longer allowed', async () => {

@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { GitHubHandler } from '../src/github-handler';
-import { addApprovedClient, bindStateToSession, createOAuthState } from '../src/workers-oauth-utils';
+import { addApprovedClient, bindStateToSession, createOAuthState, isClientApproved } from '../src/workers-oauth-utils';
 
 const BASE = 'https://worker.example.test';
 const reqInfo = { clientId: 'client-1', redirectUri: 'https://client.example.test/cb', scope: ['read'], state: 'client-state', responseType: 'code' };
@@ -21,17 +21,22 @@ const handle = (request: Request, oauth = provider(), extraEnv: Record<string, u
 
 const cookiesOf = (response: Response) => response.headers.getSetCookie();
 
-// Fakes GitHub's token endpoint and user API.
-function github({ login = 'owner', tokenOk = true } = {}) {
-  return vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
-    const url = new URL(input instanceof Request ? input.url : String(input));
+// Fakes GitHub's token endpoint and user API. Like GitHub, the user API only answers
+// for the token the token endpoint issued.
+function github({ login = 'owner', tokenOk = true, userOk = true } = {}) {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
     if (url.href === 'https://github.com/login/oauth/access_token') {
       return tokenOk
         ? new Response('access_token=gh-token', { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })
         : new Response('denied', { status: 401 });
     }
     if (url.href === 'https://api.github.com/user') {
-      return Response.json({ login, name: 'Owner Name', email: 'owner@example.test' });
+      const authorized = /^(token|bearer) gh-token$/i.test(request.headers.get('Authorization') ?? '');
+      return authorized && userOk
+        ? Response.json({ login, name: 'Owner Name', email: 'owner@example.test' })
+        : Response.json({ message: 'Bad credentials' }, { status: 401 });
     }
     throw new Error(`unexpected fetch ${url.href}`);
   });
@@ -79,7 +84,9 @@ describe('POST /authorize', () => {
     expect(response.status).toBe(302);
     const state = new URL(response.headers.get('Location')!).searchParams.get('state')!;
     const [approvedCookie, bindingCookie] = cookiesOf(response);
-    expect(approvedCookie).toMatch(/^__Host-APPROVED_CLIENTS=/);
+    const remembered = new Request(BASE, { headers: { Cookie: approvedCookie.split(';')[0] } });
+    expect(await isClientApproved(remembered, 'client-1', env.COOKIE_ENCRYPTION_KEY)).toBe(true);
+    expect(await isClientApproved(remembered, 'client-2', env.COOKIE_ENCRYPTION_KEY)).toBe(false);
     expect(bindingCookie).toBe((await bindStateToSession(state)).setCookie);
     expect(JSON.parse((await env.OAUTH_KV.get(`oauth:state:${state}`))!)).toEqual(reqInfo);
   });
@@ -161,6 +168,32 @@ describe('GET /callback', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: 'invalid_request' });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('stops when GitHub will not say who signed in', async () => {
+    github({ userOk: false });
+    const oauth = provider();
+    const response = await handle(await startedFlow(), oauth);
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(oauth.completeAuthorization).not.toHaveBeenCalled();
+  });
+
+  test("rejects a callback carrying another browser's session cookie", async () => {
+    const fetchMock = github();
+    const started = await startedFlow();
+    const other = (await bindStateToSession('someone-elses-state')).setCookie.split(';')[0];
+    const response = await handle(new Request(started.url, { headers: { Cookie: other } }));
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('accepts each sign-in callback only once', async () => {
+    github();
+    const oauth = provider();
+    const started = await startedFlow();
+    expect((await handle(started.clone(), oauth)).status).toBe(302);
+    expect((await handle(started.clone(), oauth)).status).toBe(400);
+    expect(oauth.completeAuthorization).toHaveBeenCalledTimes(1);
   });
 
   test('rejects stored state without a client', async () => {
