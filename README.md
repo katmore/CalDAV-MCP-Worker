@@ -1,5 +1,7 @@
 # CalDAV MCP Worker
 
+[![Tests](https://github.com/katmore/CalDAV-MCP-Worker/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/katmore/CalDAV-MCP-Worker/actions/workflows/tests.yml)
+[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen)](VALIDATION.md#automated-tests)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 22+](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)

@@ -17,6 +17,11 @@ the deployed Worker, using Vitest and Cloudflare's Vitest plugin. It fails if:
 - or the code copied from Cloudflare has changed without a recorded patch (see
   [Copied starter code](#copied-starter-code)).
 
+The same command runs on GitHub for every push and pull request
+(`.github/workflows/tests.yml`); the README's tests badge shows the latest
+result on `main`. Because the run fails below 100% coverage, the coverage badge
+holds whenever the tests badge is green.
+
 Nothing in the tests reaches a real account. The calendar server and GitHub are
 replaced by fakes, and every secret has a test-only value in
 `vitest.config.mts`.
