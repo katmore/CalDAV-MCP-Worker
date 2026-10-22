@@ -1,0 +1,13 @@
+{
+  "description": "Sign-in code copied from Cloudflare's remote MCP GitHub OAuth starter. upstream/ holds the files exactly as published at this commit; patches/ holds the changes this project makes to them.",
+  "repository": "cloudflare/ai",
+  "path": "demos/remote-mcp-github-oauth/src",
+  "commit": "f451cc88a2124940fcb08e4b2145b64f884edd43",
+  "branch": "main",
+  "license": "MIT",
+  "files": {
+    "github-handler.ts": "src/github-handler.ts",
+    "utils.ts": "src/utils.ts",
+    "workers-oauth-utils.ts": "src/workers-oauth-utils.ts"
+  }
+}

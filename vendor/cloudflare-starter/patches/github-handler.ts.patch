@@ -1,0 +1,88 @@
+--- a/github-handler.ts
++++ b/github-handler.ts
+@@ -3,6 +3,7 @@
+ import { Hono } from "hono";
+ import { Octokit } from "octokit";
+ import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, type Props } from "./utils";
++import { isAllowedLogin } from "./safety";
+ import {
+ 	addApprovedClient,
+ 	bindStateToSession,
+@@ -39,9 +40,9 @@
+ 		client: await c.env.OAUTH_PROVIDER.lookupClient(clientId),
+ 		csrfToken,
+ 		server: {
+-			description: "This is a demo MCP Remote Server using GitHub for authentication.",
++			description: "Private calendar access for the configured owner.",
+ 			logo: "https://avatars.githubusercontent.com/u/314135?s=200&v=4",
+-			name: "Cloudflare GitHub MCP Server",
++			name: "Private Calendar",
+ 		},
+ 		setCookie,
+ 		state: { oauthReqInfo },
+@@ -89,35 +90,30 @@
+ 		headers.append("Set-Cookie", approvedClientCookie);
+ 		headers.append("Set-Cookie", sessionBindingCookie);
+ 
+-		return redirectToGithub(c.req.raw, stateToken, Object.fromEntries(headers));
++		return redirectToGithub(c.req.raw, stateToken, headers);
+ 	} catch (error: any) {
+-		console.error("POST /authorize error:", error);
++
+ 		if (error instanceof OAuthError) {
+ 			return error.toResponse();
+ 		}
+ 		// Unexpected non-OAuth error
+-		return c.text(`Internal server error: ${error.message}`, 500);
++		return c.text("Internal server error", 500);
+ 	}
+ });
+ 
+ async function redirectToGithub(
+ 	request: Request,
+ 	stateToken: string,
+-	headers: Record<string, string> = {},
++	headers: HeadersInit = {},
+ ) {
+-	return new Response(null, {
+-		headers: {
+-			...headers,
+-			location: getUpstreamAuthorizeUrl({
+-				client_id: env.GITHUB_CLIENT_ID,
+-				redirect_uri: new URL("/callback", request.url).href,
+-				scope: "read:user",
+-				state: stateToken,
+-				upstream_url: "https://github.com/login/oauth/authorize",
+-			}),
+-		},
+-		status: 302,
+-	});
++	const responseHeaders = new Headers(headers);
++ responseHeaders.set('Location', getUpstreamAuthorizeUrl({
++   client_id: env.GITHUB_CLIENT_ID,
++   redirect_uri: new URL('/callback', request.url).href,
++   scope: 'read:user', state: stateToken,
++   upstream_url: 'https://github.com/login/oauth/authorize',
++ }));
++ return new Response(null, { headers: responseHeaders, status: 302 });
+ }
+ 
+ /**
+@@ -171,6 +167,9 @@
+ 	// Fetch the user info from GitHub
+ 	const user = await new Octokit({ auth: accessToken }).rest.users.getAuthenticated();
+ 	const { login, name, email } = user.data;
++	if (!isAllowedLogin(login, c.env.ALLOWED_GITHUB_LOGIN)) {
++		return c.text("Not authorized", 403);
++	}
+ 
+ 	// Return back to the MCP client a new token
+ 	const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
+@@ -179,7 +178,6 @@
+ 		},
+ 		// This will be available on this.props inside MyMCP
+ 		props: {
+-			accessToken,
+ 			email,
+ 			login,
+ 			name,

@@ -1,0 +1,17 @@
+--- a/utils.ts
++++ b/utils.ts
+@@ -68,7 +68,7 @@
+ 		method: "POST",
+ 	});
+ 	if (!resp.ok) {
+-		console.log(await resp.text());
++
+ 		return [null, new Response("Failed to fetch access token", { status: 500 })];
+ 	}
+ 	const body = await resp.formData();
+@@ -85,5 +85,4 @@
+ 	login: string;
+ 	name: string;
+ 	email: string;
+-	accessToken: string;
+ };

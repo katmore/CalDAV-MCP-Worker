@@ -11,7 +11,10 @@
     "start": "wrangler dev -c wrangler.local.jsonc",
     "cf-typegen": "wrangler types",
     "type-check": "tsc --noEmit",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node scripts/vendor.mjs check && node --import tsx --test test/*.test.ts",
+    "vendor:check": "node scripts/vendor.mjs check",
+    "vendor:update": "node scripts/vendor.mjs update",
+    "vendor:verify": "node scripts/vendor.mjs verify"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.8.3",
