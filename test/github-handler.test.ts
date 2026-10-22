@@ -174,7 +174,8 @@ describe('GET /callback', () => {
     github({ userOk: false });
     const oauth = provider();
     const response = await handle(await startedFlow(), oauth);
-    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe('Could not verify GitHub account');
     expect(oauth.completeAuthorization).not.toHaveBeenCalled();
   });
 

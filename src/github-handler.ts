@@ -1,7 +1,6 @@
 import { env } from "cloudflare:workers";
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
-import { Octokit } from "octokit";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, type Props } from "./utils";
 import { isAllowedLogin } from "./safety";
 import {
@@ -165,8 +164,17 @@ app.get("/callback", async (c) => {
 	if (errResponse) return errResponse;
 
 	// Fetch the user info from GitHub
-	const user = await new Octokit({ auth: accessToken }).rest.users.getAuthenticated();
-	const { login, name, email } = user.data;
+	const userResponse = await fetch("https://api.github.com/user", {
+		headers: {
+			Accept: "application/vnd.github+json",
+			Authorization: `Bearer ${accessToken}`,
+			"User-Agent": "caldav-mcp-worker",
+		},
+	});
+	if (!userResponse.ok) {
+		return c.text("Could not verify GitHub account", 502);
+	}
+	const { login, name, email } = (await userResponse.json()) as { login: string; name: string; email: string };
 	if (!isAllowedLogin(login, c.env.ALLOWED_GITHUB_LOGIN)) {
 		return c.text("Not authorized", 403);
 	}

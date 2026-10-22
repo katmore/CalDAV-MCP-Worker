@@ -1,14 +1,16 @@
 --- a/github-handler.ts
 +++ b/github-handler.ts
-@@ -3,6 +3,7 @@
+@@ -1,8 +1,8 @@
+ import { env } from "cloudflare:workers";
+ import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
  import { Hono } from "hono";
- import { Octokit } from "octokit";
+-import { Octokit } from "octokit";
  import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, type Props } from "./utils";
 +import { isAllowedLogin } from "./safety";
  import {
  	addApprovedClient,
  	bindStateToSession,
-@@ -39,9 +40,9 @@
+@@ -39,9 +39,9 @@
  		client: await c.env.OAUTH_PROVIDER.lookupClient(clientId),
  		csrfToken,
  		server: {
@@ -20,7 +22,7 @@
  		},
  		setCookie,
  		state: { oauthReqInfo },
-@@ -89,35 +90,30 @@
+@@ -89,35 +89,30 @@
  		headers.append("Set-Cookie", approvedClientCookie);
  		headers.append("Set-Cookie", sessionBindingCookie);
  
@@ -68,17 +70,30 @@
  }
  
  /**
-@@ -171,6 +167,9 @@
+@@ -169,8 +164,20 @@
+ 	if (errResponse) return errResponse;
+ 
  	// Fetch the user info from GitHub
- 	const user = await new Octokit({ auth: accessToken }).rest.users.getAuthenticated();
- 	const { login, name, email } = user.data;
+-	const user = await new Octokit({ auth: accessToken }).rest.users.getAuthenticated();
+-	const { login, name, email } = user.data;
++	const userResponse = await fetch("https://api.github.com/user", {
++		headers: {
++			Accept: "application/vnd.github+json",
++			Authorization: `Bearer ${accessToken}`,
++			"User-Agent": "caldav-mcp-worker",
++		},
++	});
++	if (!userResponse.ok) {
++		return c.text("Could not verify GitHub account", 502);
++	}
++	const { login, name, email } = (await userResponse.json()) as { login: string; name: string; email: string };
 +	if (!isAllowedLogin(login, c.env.ALLOWED_GITHUB_LOGIN)) {
 +		return c.text("Not authorized", 403);
 +	}
  
  	// Return back to the MCP client a new token
  	const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
-@@ -179,7 +178,6 @@
+@@ -179,7 +186,6 @@
  		},
  		// This will be available on this.props inside MyMCP
  		props: {
@@ -86,7 +101,7 @@
  			email,
  			login,
  			name,
-@@ -191,9 +189,7 @@
+@@ -191,9 +197,7 @@
  
  	// Clear the session binding cookie (one-time use) by creating response with headers
  	const headers = new Headers({ Location: redirectTo });
