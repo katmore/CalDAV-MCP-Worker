@@ -83,8 +83,8 @@ These are enforced by the server itself, whatever the assistant asks for.
   the whole series, so the assistant has to confirm that explicitly; single
   occurrences can't be changed or removed on their own.
 - **Repeating events may be incomplete.** Listings that might be missing
-  occurrences of a repeating event, or that include events saved without a
-  timezone, come back flagged `capped: true` so the assistant knows not to treat
+  occurrences of a repeating event, or that include events whose timezone isn't
+  saved with them, come back flagged `capped: true` so the assistant knows not to treat
   them as a free/busy answer. Double-check repeating events against your
   calendar app.
 

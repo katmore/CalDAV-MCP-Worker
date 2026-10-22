@@ -15,13 +15,10 @@ export async function checkWrite(response: Response) {
 export function isSeries(events: ICAL.Component[]) {
   return events.length > 1 || events.some(e => ['rrule', 'rdate', 'exdate', 'recurrence-id'].some(p => e.hasProperty(p)));
 }
+// Timezones defined inside a resource are resolved from that resource alone. They are
+// deliberately not registered globally, where one resource could redefine a zone for others.
 export function prepareCalendar(data: string) {
-  const root = new ICAL.Component(ICAL.parse(data));
-  for (const component of root.getAllSubcomponents('vtimezone')) {
-    const tz = new ICAL.Timezone(component);
-    ICAL.TimezoneService.register(tz, tz.tzid);
-  }
-  return root;
+  return new ICAL.Component(ICAL.parse(data));
 }
 
 // DAV servers may escape path characters such as @ when returning hrefs.
