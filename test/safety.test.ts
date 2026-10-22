@@ -30,3 +30,8 @@ test('verified creation returns canonical read-back information',async()=> {
  assert.equal(r.verification,'verified'); assert.equal(r.created,true);
  assert.equal('etag' in r && r.etag,'"v1"');
 });
+
+test('a calendar address without a trailing slash still bounds its resources',()=> {
+ assertResource('https://calendar.example.test/123/home','https://calendar.example.test/123/home/event.ics');
+ assert.throws(()=>assertResource('https://calendar.example.test/123/home','https://calendar.example.test/123/homework/event.ics'));
+});

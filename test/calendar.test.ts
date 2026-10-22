@@ -23,7 +23,7 @@ function fakeDAV(objects:Obj[],{calendars=[{url:CAL,displayName:'Home'}],keepCre
   fetchCalendarObjects:async({objectUrls}:{objectUrls?:string[]})=>objectUrls?objects.filter(o=>objectUrls.includes(o.url)):objects,
   createCalendarObject:async(args:any)=>{
    writes.push('create'); created.push(args);
-   if (keepCreated) objects.push({url:args.calendar.url+args.filename,etag:'"new"',data:args.iCalString});
+   if (keepCreated) objects.push({url:new URL(args.filename,args.calendar.url.replace(/\/?$/,'/')).href,etag:'"new"',data:args.iCalString});
    return new Response(null,{status:201});
   },
   updateCalendarObject:async()=>{writes.push('update');return new Response(null,{status:204});},
@@ -214,4 +214,87 @@ test('update_event changes times, location and description, and rejects an end b
  const r=await call('update_event',{...base,start:'2030-01-01T12:00:00Z',end:'2030-01-01T13:00:00Z',location:'Office',description:'Notes'});
  assert.equal(r.isError,false);
  assert.deepEqual(writes,['update']);
+});
+
+test('list_events applies a moved occurrence of a repeating event',async()=> {
+ const data=ics(
+  timed('w','20300101T100000Z','20300101T110000Z','RRULE:FREQ=DAILY;COUNT=3'),
+  vevent('UID:w','RECURRENCE-ID:20300102T100000Z','DTSTART:20300102T150000Z','DTEND:20300102T160000Z','SUMMARY:Moved'),
+ );
+ const {call}=await tools([{url:CAL+'daily.ics',etag:'"1"',data}]);
+ const r=await call('list_events',RANGE);
+ assert.deepEqual(r.body.occurrences.map((o:any)=>[o.start,o.title]),[
+  ['2030-01-01T10:00:00.000Z','Test'],['2030-01-02T15:00:00.000Z','Moved'],['2030-01-03T10:00:00.000Z','Test'],
+ ]);
+ assert.equal(r.body.capped,false);
+});
+
+test('list_events skips cancelled occurrences',async()=> {
+ const data=ics(
+  timed('w','20300101T100000Z','20300101T110000Z','RRULE:FREQ=DAILY;COUNT=2'),
+  vevent('UID:w','RECURRENCE-ID:20300102T100000Z','DTSTART:20300102T100000Z','DTEND:20300102T110000Z','STATUS:CANCELLED'),
+ );
+ const {call}=await tools([{url:CAL+'daily.ics',etag:'"1"',data}]);
+ assert.deepEqual((await call('list_events',RANGE)).body.occurrences.map((o:any)=>o.start),['2030-01-01T10:00:00.000Z']);
+});
+
+test('list_events uses a timezone embedded in the event',async()=> {
+ const data=ics(
+  'BEGIN:VTIMEZONE','TZID:Test/Plus2','BEGIN:STANDARD','DTSTART:19700101T000000','TZOFFSETFROM:+0200','TZOFFSETTO:+0200','END:STANDARD','END:VTIMEZONE',
+  vevent('UID:z','DTSTART;TZID=Test/Plus2:20300103T120000','DTEND;TZID=Test/Plus2:20300103T130000','SUMMARY:Zoned'),
+ );
+ const {call}=await tools([{url:CAL+'zoned.ics',etag:'"1"',data}]);
+ const r=await call('list_events',RANGE);
+ assert.equal(r.body.occurrences[0].start,'2030-01-03T10:00:00.000Z');
+ assert.equal(r.body.capped,false);
+});
+
+test('list_events flags events saved without a timezone',async()=> {
+ const {call}=await tools([{url:CAL+'floating.ics',etag:'"1"',data:ics(vevent('UID:f','DTSTART:20300103T100000','DTEND:20300103T110000','SUMMARY:Floating'))}]);
+ assert.equal((await call('list_events',RANGE)).body.capped,true);
+});
+
+test('list_events refuses too many resources or occurrences',async()=> {
+ const many=Array.from({length:251},(_,i)=>({url:CAL+`e${i}.ics`,etag:'"1"',data:ics(timed(`e${i}`,'20300103T100000Z','20300103T110000Z'))}));
+ assert.equal((await (await tools(many)).call('list_events',RANGE)).isError,true);
+ const hourly=[{url:CAL+'hourly.ics',etag:'"1"',data:ics(timed('h','20300101T000000Z','20300101T003000Z','RRULE:FREQ=HOURLY'))}];
+ const r=await (await tools(hourly)).call('list_events',{...RANGE,end:'2030-01-30T00:00:00Z'});
+ assert.equal(r.isError,true);
+});
+
+test('get_event fills in missing event fields with empty text',async()=> {
+ const {call}=await tools([{url:CAL+'bare.ics',etag:'"1"',data:ics(vevent('X-NOTHING:1'))}]);
+ const r=await call('get_event',{calendarId:CAL,resourceId:CAL+'bare.ics'});
+ assert.deepEqual(r.body.events[0],{uid:'',title:'',start:'',end:'',rrule:'',recurrenceId:'',location:''});
+});
+
+test('get_event reports a resource with no calendar data as a failure',async()=> {
+ const {call}=await tools([{url:CAL+'empty.ics',etag:'"1"',data:undefined as any}]);
+ const r=await call('get_event',{calendarId:CAL,resourceId:CAL+'empty.ics'});
+ assert.equal(r.isError,true);
+ assert.equal(r.body.error,'CalDAV operation failed');
+});
+
+test('failures never expose what was thrown, even if it is not an Error',async()=> {
+ const calendar=new CalendarServer(ENV as any,OWNER,(async()=>({fetchCalendars:async()=>{throw 'password=hunter2';}})) as any);
+ let handler:any;
+ (calendar.server as any).registerTool=(name:string,_c:unknown,h:any)=>{if(name==='list_calendars')handler=h;};
+ await calendar.init();
+ const body=JSON.parse((await handler({})).content[0].text);
+ assert.deepEqual(body,{error:'CalDAV operation failed',reason:'unknown'});
+});
+
+test('create_event leaves out an empty location and description',async()=> {
+ const {call,created}=await tools();
+ const {location,description,...bare}=NEW;
+ assert.equal((await call('create_event',bare)).isError,false);
+ assert.doesNotMatch(created[0].iCalString,/LOCATION|DESCRIPTION/);
+});
+
+test('create_event places the event inside a calendar whose address lacks a trailing slash',async()=> {
+ const noSlash=CAL.slice(0,-1);
+ const {call}=await tools([],ENV,OWNER,{calendars:[{url:noSlash,displayName:'Home'}]});
+ const r=await call('create_event',{...NEW,calendarId:noSlash});
+ assert.match(r.body.resourceId,new RegExp('^'+CAL+'[0-9a-f-]{36}\\.ics$'));
+ assert.equal(r.body.verification,'verified');
 });
