@@ -53,14 +53,15 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
   `ALLOWED_GITHUB_LOGIN` gets in.
 - **Calendar access.** The Worker logs in to your calendar provider with a
   username and password stored as [secrets](#secret).
-- **Connecting apps.** An app identifies itself either with a public metadata
-  document (its name and return address at a web address it controls), which
-  the current MCP spec prefers, or by registering with the Worker. Both work.
+- **Connecting apps.** An app identifies itself with a public metadata
+  document: its name and return address at a web address it controls. This is
+  the method the current MCP spec prefers, and ChatGPT and Claude support it.
+  The older method, where apps register with the Worker, is off unless you set
+  `ALLOW_CLIENT_REGISTRATION` to `"true"`.
 - **Storage.** After you sign in, the Worker keeps the tokens it issues to
   your assistant in a [KV namespace](#kv-namespace), so the assistant stays
-  signed in. Apps that register are stored there too; apps that use a metadata
-  document aren't. A sign-in in progress is kept in a signed browser cookie,
-  not in KV. No calendar data is stored.
+  signed in. Nothing is stored before that: a sign-in in progress is kept in a
+  signed browser cookie. No calendar data is stored.
 
 ### Tools
 
@@ -172,6 +173,8 @@ Then edit `wrangler.local.jsonc`:
   `"binding": "OAUTH_KV"` as it is; the code uses that name.
 - `CALDAV_URL` and, if your provider needs it, `CALDAV_TRUSTED_HOSTS`: from the
   [Supported calendars](#supported-calendars) table.
+- `ALLOW_CLIENT_REGISTRATION`: leave it `"false"` unless your assistant can't
+  connect without registering (see step 6).
 - `name` (optional): the Worker's name, which becomes part of its address.
   Pick it now, since renaming later creates a second Worker.
 
@@ -249,9 +252,12 @@ remote [MCP](#mcp) server. Enter your Worker's address followed by `/mcp`:
 https://<worker-name>.<your-subdomain>.workers.dev/mcp
 ```
 
-If it asks for an authentication type, choose OAuth. When you connect, a page
-from your Worker asks you to approve the connection, then GitHub asks you to
-sign in. Sign in as the account you set in `ALLOWED_GITHUB_LOGIN`.
+If it asks for an authentication type, choose OAuth. If it asks how to
+identify itself, pick the metadata document option: in Claude that's "Use
+Claude's published identity", and in ChatGPT it's the client metadata document
+option. When you connect, a page from your Worker asks you to approve the
+connection, then GitHub asks you to sign in. Sign in as the account you set in
+`ALLOWED_GITHUB_LOGIN`.
 
 Some assistants only offer this on certain plans or behind a developer
 setting.
@@ -267,7 +273,8 @@ npm run smoke -- --url https://<worker-name>.<your-subdomain>.workers.dev --cale
 It opens your browser to sign in, then creates, edits and deletes a test event
 a week from now and prints a line per step. Leave out `--calendar` to see your
 calendar names. It identifies itself with `oauth/smoke-test-client.json` from
-this repository's `main` branch; add `--register` to register instead.
+this repository's `main` branch. `--register` registers instead, which needs
+`ALLOW_CLIENT_REGISTRATION` set to `"true"`.
 
 To check your assistant too, paste these prompts into it:
 
@@ -323,6 +330,7 @@ To check your assistant too, paste these prompts into it:
 | GitHub says the redirect URI isn't valid | The callback URL in the GitHub OAuth app doesn't exactly match your Worker's address plus `/callback` |
 | "CALDAV_URL must be set" or "must be an https:// address" | `CALDAV_URL` in `wrangler.local.jsonc` is missing, empty or not `https://`; fix it and deploy again |
 | "CalDAV operation failed" with reason `TransportError` | The calendar server sent the Worker to an `http://` address or to a host not in `CALDAV_TRUSTED_HOSTS`. For iCloud, set `CALDAV_TRUSTED_HOSTS` to `.icloud.com` |
+| Your assistant says the server doesn't support client registration | It isn't using the metadata document option. Pick that option when adding the connector, or set `ALLOW_CLIENT_REGISTRATION` to `"true"` and deploy again |
 | "CALDAV_TRUSTED_HOSTS must list host names" | Use bare host names separated by commas, such as `.icloud.com`, with no `https://` or paths |
 | "CalDAV operation failed" on every request | Wrong `CALDAV_USERNAME`, `CALDAV_PASSWORD` or `CALDAV_URL` (or it's still the `caldav.example.com` placeholder), or your provider requires an app-specific password |
 | `wrangler secret put` offers to create a new Worker | You changed `name` and left out `-c wrangler.local.jsonc`, so it's targeting the placeholder name |

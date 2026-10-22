@@ -81,7 +81,11 @@ async function clientId(metadata, redirectUri) {
     console.log('Identifying with the client metadata document.');
     return args['client-id'] ?? CLIENT_DOCUMENT;
   }
-  if (!metadata.registration_endpoint) throw new Error('the Worker supports neither client metadata documents nor registration');
+  if (!metadata.registration_endpoint) {
+    throw new Error(args.register
+      ? 'the Worker has registration switched off (ALLOW_CLIENT_REGISTRATION); run without --register'
+      : 'the Worker supports neither client metadata documents nor registration');
+  }
   console.log('Registering as a new app.');
   const client = await json(await fetch(metadata.registration_endpoint, {
     method: 'POST',

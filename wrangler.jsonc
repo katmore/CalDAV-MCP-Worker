@@ -29,7 +29,7 @@
   "observability": {
     "enabled": false
   },
-  "vars": {"CALDAV_URL": "https://caldav.example.com", "CALDAV_TRUSTED_HOSTS": ""},
+  "vars": {"CALDAV_URL": "https://caldav.example.com", "CALDAV_TRUSTED_HOSTS": "", "ALLOW_CLIENT_REGISTRATION": "false"},
   "dev": {
     "port": 8788
   }

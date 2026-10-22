@@ -5,6 +5,7 @@ import worker from '../src/index';
 const BASE = 'https://worker.example.test';
 const CLIENT_CB = 'https://client.example.test/cb';
 const CLIENT_DOC = 'https://client.example.test/oauth/client.json';
+const REGISTRATION_ON = { ALLOW_CLIENT_REGISTRATION: 'true' };
 
 async function call(request: Request, overrides: Record<string, unknown> = {}) {
   const ctx = createExecutionContext();
@@ -35,6 +36,12 @@ function network({ login = 'owner', clientDoc }: { login?: string; clientDoc?: R
   });
 }
 
+const register = () => new Request(`${BASE}/register`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ client_name: 'Test Client', redirect_uris: [CLIENT_CB], token_endpoint_auth_method: 'none' }),
+});
+
 type SignInOptions = { login?: string; tamperState?: (state: any) => any; keepBinding?: boolean; clientDoc?: Record<string, unknown> };
 
 // Runs the whole sign-in as an MCP client would: register (or, with clientDoc, identify
@@ -43,11 +50,7 @@ async function signIn({ login = 'owner', tamperState, keepBinding = true, client
   network({ login, clientDoc });
   let client_id = CLIENT_DOC;
   if (!clientDoc) {
-    const registered = await call(new Request(`${BASE}/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_name: 'Test Client', redirect_uris: [CLIENT_CB], token_endpoint_auth_method: 'none' }),
-    }));
+    const registered = await call(register(), REGISTRATION_ON);
     expect(registered.status).toBe(201);
     client_id = (await registered.json() as { client_id: string }).client_id;
   }
@@ -125,10 +128,31 @@ describe('Worker entry point', () => {
     expect((await response.json() as any).code_challenge_methods_supported).toEqual(['S256']);
   });
 
-  test('advertises both client metadata documents and registration', async () => {
-    const metadata = await (await call(new Request(`${BASE}/.well-known/oauth-authorization-server`))).json() as any;
-    expect(metadata.client_id_metadata_document_supported).toBe(true);
-    expect(metadata.registration_endpoint).toBe(`${BASE}/register`);
+  describe('client registration', () => {
+    const metadata = async (overrides = {}) =>
+      await (await call(new Request(`${BASE}/.well-known/oauth-authorization-server`), overrides)).json() as any;
+    const keys = async () => (await env.OAUTH_KV.list()).keys.map(k => k.name).sort();
+
+    test('is off by default: not advertised, refused, and nothing stored', async () => {
+      const before = await keys();
+      expect((await metadata()).registration_endpoint).toBeUndefined();
+      expect((await metadata()).client_id_metadata_document_supported).toBe(true);
+      expect((await call(register())).status).toBe(404);
+      expect((await call(register(), { ALLOW_CLIENT_REGISTRATION: 'yes' })).status).toBe(404);
+      expect(await keys()).toEqual(before);
+    });
+
+    test('can be turned on with ALLOW_CLIENT_REGISTRATION', async () => {
+      expect((await metadata(REGISTRATION_ON)).registration_endpoint).toBe(`${BASE}/register`);
+      expect((await call(register(), REGISTRATION_ON)).status).toBe(201);
+    });
+
+    test('apps registered earlier keep working after it is turned off', async () => {
+      // signIn registers with registration on; everything after that runs with it off.
+      const { accessToken } = await signIn();
+      const response = await call(rpc(accessToken, 'tools/list'));
+      expect((await rpcResult(response)).result.tools).toHaveLength(6);
+    });
   });
 
   test('does not let another GitHub account finish signing in', async () => {
