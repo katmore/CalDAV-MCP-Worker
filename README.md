@@ -300,7 +300,9 @@ npm run deploy
 ```
 
 If you change the code, run `npm run type-check && npm test` before deploying.
-See [VALIDATION.md](VALIDATION.md) for what has been tested so far.
+The tests run in Cloudflare's runtime and fail if any code in `src/` is
+untested or if the copied Cloudflare sign-in code changes without a recorded
+patch. [VALIDATION.md](VALIDATION.md) explains what is tested and how.
 
 ## Glossary
 
