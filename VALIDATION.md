@@ -94,6 +94,13 @@ The sign-in code in `src/github-handler.ts`, `src/utils.ts` and
 | `npm run vendor:update` | Rewrites the patches after an intentional change to one of those files. |
 | `npm run vendor:verify` | Downloads the files from GitHub. Fails if the upstream copies were edited, or if Cloudflare has changed the files since, so you can review their changes. |
 
+`vendor:verify` also runs automatically every Monday through the GitHub Actions
+workflow in `.github/workflows/vendor-watch.yml`, and can be run by hand from
+the repository's Actions tab. If Cloudflare has changed the files, it opens an
+issue titled "Cloudflare starter files changed upstream", or comments on the
+one already open, listing the changed files with links to the changes. If the
+check itself fails, GitHub sends its usual failed-workflow email.
+
 ## Live check
 
 Separately from the automated tests, the Worker was deployed and used through

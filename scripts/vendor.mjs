@@ -10,7 +10,9 @@
 //   check    (offline) upstream + patches must reproduce src/ exactly. Run by `npm test`.
 //   update   regenerate patches/ from the current src/ after an intentional edit.
 //   verify   (online) upstream/ must match the recorded commit, and the files must be
-//            unchanged upstream since then; fails so you notice fixes worth pulling in.
+//            unchanged upstream since then. Exits 1 if a copy was edited or something
+//            went wrong, and 3 if the only finding is that upstream has changed, so a
+//            scheduled job can tell "review Cloudflare's changes" apart from "broken".
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, copyFileSync } from 'node:fs';
@@ -27,7 +29,9 @@ const vendors = readdirSync(join(root, 'vendor'), { withFileTypes: true })
 
 const patchPath = (v, file) => join(v.dir, 'patches', `${file}.patch`);
 let failed = false;
+let upstreamChanged = false;
 const fail = message => { console.error(`✖ ${message}`); failed = true; };
+const changedUpstream = message => { console.error(`✖ ${message}`); upstreamChanged = true; };
 const ok = message => console.log(`✔ ${message}`);
 
 function check() {
@@ -82,7 +86,7 @@ async function verify() {
       if (await fetchRaw(v.source, v.source.commit, file) === local) ok(`${v.name}: upstream/${file} matches commit ${v.source.commit.slice(0, 7)}`);
       else fail(`${v.name}: upstream/${file} differs from commit ${v.source.commit.slice(0, 7)}; it should never be edited by hand`);
       if (await fetchRaw(v.source, v.source.branch, file) === local) ok(`${v.name}: ${file} is unchanged on ${v.source.branch}`);
-      else fail(`${v.name}: ${file} has changed on ${v.source.branch} since ${v.source.commit.slice(0, 7)}; review upstream before deciding whether to update`);
+      else changedUpstream(`${v.name}: ${file} has changed on ${v.source.branch} since ${v.source.commit.slice(0, 7)}; review upstream before deciding whether to update`);
     }
   }
 }
@@ -92,4 +96,4 @@ if (command === 'check') check();
 else if (command === 'update') update();
 else if (command === 'verify') await verify();
 else { console.error('usage: vendor.mjs check | update | verify'); process.exit(2); }
-process.exit(failed ? 1 : 0);
+process.exit(failed ? 1 : upstreamChanged ? 3 : 0);
