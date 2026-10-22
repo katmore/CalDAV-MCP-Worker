@@ -276,7 +276,19 @@ option.
 
 ### 7. Try it
 
-Paste these into your assistant in order, and again after each deploy. Stop at
+For a quick automated check of the Worker itself, run:
+
+```sh
+npm run smoke -- --url https://<worker-name>.<your-subdomain>.workers.dev --calendar "<calendar name>"
+```
+
+It opens your browser to approve and sign in, then lists your calendars and
+creates, reads, edits, finds and deletes a test event a week from now, printing
+a line per step. The test event is removed even if a step fails. Leave out
+`--calendar` to just see the calendar names.
+
+To check your assistant as well, paste these into it in order, and again after
+each deploy. Stop at
 the first failure, compare each answer with your calendar app, and use a
 calendar you don't mind testing in.
 

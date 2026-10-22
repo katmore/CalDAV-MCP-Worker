@@ -14,7 +14,8 @@
     "test": "node scripts/vendor.mjs check && vitest run --coverage",
     "vendor:check": "node scripts/vendor.mjs check",
     "vendor:update": "node scripts/vendor.mjs update",
-    "vendor:verify": "node scripts/vendor.mjs verify"
+    "vendor:verify": "node scripts/vendor.mjs verify",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.8.3",

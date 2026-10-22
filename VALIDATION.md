@@ -112,6 +112,12 @@ check itself fails, GitHub sends its usual failed-workflow email.
 
 ## Live check
 
+`npm run smoke` (see the README's [Try it](README.md#7-try-it) step) checks a
+deployed Worker against your real calendar: it signs in like an MCP client,
+then creates, reads, edits, lists and deletes a test event, cleaning up even
+if a step fails. Its logic was tested against a local stand-in Worker,
+including a failure partway through.
+
 Separately from the automated tests, the Worker was deployed and used through
 an MCP client against a real iCloud calendar. All of these passed without
 errors or retries:
