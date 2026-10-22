@@ -67,17 +67,17 @@ These are enforced by the server itself, whatever the assistant asks for.
 - **No silent overwrites.** Before changing or deleting an event, the assistant
   must read it first. If the event changed in the meantime (say, you edited it
   on your phone), the change is refused instead of overwriting yours. Creating
-  an event never replaces an existing one, and every write is checked to make
-  sure the server actually accepted it.
+  an event never replaces an existing one.
 - **What can't be edited:** repeating events, all-day events, invitations, and
-  events stored with a length instead of an end time. Edits keep any details
-  the server doesn't understand, such as alarms.
+  events defined by a duration rather than an end time. When you edit other
+  events, details the server doesn't handle (such as alarms) are left
+  untouched.
 - **What can't be deleted:** invitations. Deleting a repeating event removes
   the whole series and needs an extra confirmation; single occurrences can't be
   changed or removed on their own.
 - **Repeating events may be incomplete.** When listing events, results that
-  might be missing occurrences are marked `capped: true`. Don't use those to
-  decide whether you're free. Events saved without a timezone ("floating"
+  might be missing some occurrences of a repeating event come back flagged
+  `capped: true`. Don't use those to decide whether you're free. Events saved without a timezone ("floating"
   times) are also ambiguous. This isn't a full scheduling engine, so double-check
   repeating events against your calendar app before relying on them.
 
