@@ -1,0 +1,22 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local Worker state and generated types
+.wrangler/
+.wrangler-local/
+worker-configuration.d.ts
+
+# Local credentials and environment settings
+.dev.vars*
+.env*
+
+# Local Wrangler config with real deployment IDs
+wrangler.local.jsonc
+
+# Logs and OS metadata
+logs/
+*.log
+.DS_Store

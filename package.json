@@ -1,0 +1,34 @@
+{
+  "name": "caldav-mcp-worker",
+  "version": "0.1.1",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "deploy": "wrangler deploy -c wrangler.local.jsonc",
+    "dev": "wrangler dev -c wrangler.local.jsonc",
+    "start": "wrangler dev -c wrangler.local.jsonc",
+    "cf-typegen": "wrangler types",
+    "type-check": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "0.8.3",
+    "agents": "0.29.0",
+    "hono": "4.13.13",
+    "ical.js": "2.2.1",
+    "just-pick": "4.2.0",
+    "octokit": "5.0.5",
+    "tsdav": "2.5.0",
+    "zod": "4.6.7",
+    "@modelcontextprotocol/server": "2.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261021.1",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "wrangler": "4.151.3"
+  },
+  "license": "MIT"
+}

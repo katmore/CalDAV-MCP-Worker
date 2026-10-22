@@ -1,0 +1,36 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "caldav-mcp-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-03-10",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  /**
+	 * Note: Use secrets to store sensitive data.
+	 * https://developers.cloudflare.com/workers/configuration/secrets/
+	 *
+	 * Commands to set secrets:
+	 * npx wrangler secret put GITHUB_CLIENT_ID -c wrangler.local.jsonc
+	 * npx wrangler secret put GITHUB_CLIENT_SECRET -c wrangler.local.jsonc
+	 * npx wrangler secret put COOKIE_ENCRYPTION_KEY -c wrangler.local.jsonc
+	 * npx wrangler secret put ALLOWED_GITHUB_LOGIN -c wrangler.local.jsonc
+	 * npx wrangler secret put CALDAV_USERNAME -c wrangler.local.jsonc
+	 * npx wrangler secret put CALDAV_PASSWORD -c wrangler.local.jsonc
+	 */
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+  "observability": {
+    "enabled": false
+  },
+  "vars": {"CALDAV_URL": "https://caldav.example.com"},
+  "dev": {
+    "port": 8788
+  }
+}
