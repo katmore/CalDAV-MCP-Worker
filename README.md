@@ -111,11 +111,7 @@ These risks come from people and content rather than from flaws in the code.
 
 ## Setup
 
-Setup takes about 20 minutes. The Worker is deployed first so you learn its
-address, then that address is registered with GitHub for sign-in, your
-passwords are stored as Cloudflare secrets, and finally your AI assistant is
-pointed at it. Until the secrets are set, nobody can sign in or reach your
-calendar, so the early deploy is safe.
+Setup takes about 20 minutes.
 
 ### Prerequisites
 
@@ -188,6 +184,9 @@ The first time, wrangler may ask you to choose a name for your account's
 of the output. It looks like
 `https://<worker-name>.<your-subdomain>.workers.dev`, and you'll use it in the
 next steps.
+
+Deploying before the secrets are set is safe: until they are, nobody can sign
+in or reach your calendar.
 
 ### 4. Register a GitHub OAuth app
 
