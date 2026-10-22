@@ -162,8 +162,7 @@ Then edit `wrangler.local.jsonc`:
   means updating the GitHub app in step 4.
 
 `npm run deploy` uses this file. When you run `wrangler` directly, add
-`-c wrangler.local.jsonc` so it targets your Worker. Keep a private backup of
-this file, since a fresh clone won't have it.
+`-c wrangler.local.jsonc` so it targets your Worker.
 
 ### 3. Deploy once to get your address
 
