@@ -2,14 +2,14 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { createDAVClient } from 'tsdav';
 import ICAL from 'ical.js';
 import { z } from 'zod';
+import { ConfigurationError, caldavUrl, guardedFetch, trustedHosts } from './transport';
 import { assertResource, checkWrite, isAllowedLogin, isSeries, prepareCalendar, sameResource, creationResult } from './safety';
 
 export type Props = { login: string; name: string; email: string };
-export type CalendarEnv = { CALDAV_USERNAME: string; CALDAV_PASSWORD: string; ALLOWED_GITHUB_LOGIN: string; CALDAV_URL: string };
+export type CalendarEnv = { CALDAV_USERNAME: string; CALDAV_PASSWORD: string; ALLOWED_GITHUB_LOGIN: string; CALDAV_URL: string; CALDAV_TRUSTED_HOSTS?: string };
 // Tests pass a fake CalDAV client in place of tsdav's.
 export type ConnectDAV = typeof createDAVClient;
 
-export class ConfigurationError extends Error {}
 
 // A deliberately small, single-owner calendar MCP server.
 // Access is enforced by GitHub OAuth callback AND before tool registration.
@@ -27,21 +27,22 @@ export class CalendarServer {
       content: [{ type: 'text' as const, text: JSON.stringify(value) }],
     });
     const failure = (error: unknown) => ({ isError: true, ...result({
-      error: error instanceof ConfigurationError ? 'CALDAV_URL must be set in Worker configuration' : 'CalDAV operation failed',
+      error: error instanceof ConfigurationError ? error.message : 'CalDAV operation failed',
       reason: error instanceof Error ? error.name : 'unknown',
       // Do not expose exceptions or credentials.
     }) });
 
     const dav = async () => {
-      if (!this.env.CALDAV_URL?.trim()) throw new ConfigurationError('CALDAV_URL is required');
+      const serverUrl = caldavUrl(this.env.CALDAV_URL);
       const client = await this.connect({
-        serverUrl: this.env.CALDAV_URL,
+        serverUrl: serverUrl.href,
         credentials: {
           username: this.env.CALDAV_USERNAME,
           password: this.env.CALDAV_PASSWORD,
         },
         authMethod: 'Basic',
         defaultAccountType: 'caldav',
+        fetch: guardedFetch(trustedHosts(serverUrl, this.env.CALDAV_TRUSTED_HOSTS)),
       });
       return client;
     };
