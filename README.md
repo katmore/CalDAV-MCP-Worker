@@ -1,5 +1,12 @@
 # CalDAV MCP Worker
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node.js 22+](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
+[![MCP](https://img.shields.io/badge/MCP-server-6E56CF)](https://modelcontextprotocol.io)
+[![CalDAV](https://img.shields.io/badge/CalDAV-RFC%204791-555555)](https://www.rfc-editor.org/rfc/rfc4791)
+
 Let an AI assistant such as ChatGPT or Claude read and manage your calendar.
 You deploy this small server to your own Cloudflare account and connect your
 assistant to it; from then on you can ask things like "what's on my calendar
