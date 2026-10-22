@@ -11,6 +11,9 @@ export default new OAuthProvider({
     return createMcpHandler(async () => { const calendar = new CalendarServer(env, props); await calendar.init(); return calendar.server; })(request, env, ctx);
   } },
   allowPlainPKCE: false,
+  // Apps may identify themselves with a metadata document URL instead of registering,
+  // which the current MCP spec prefers. Registration (/register) stays available.
+  clientIdMetadataDocumentEnabled: true,
   apiRoute: '/mcp',
   authorizeEndpoint: '/authorize',
   clientRegistrationEndpoint: '/register',

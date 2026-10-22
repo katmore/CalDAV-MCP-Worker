@@ -4,6 +4,7 @@ import worker from '../src/index';
 
 const BASE = 'https://worker.example.test';
 const CLIENT_CB = 'https://client.example.test/cb';
+const CLIENT_DOC = 'https://client.example.test/oauth/client.json';
 
 async function call(request: Request, overrides: Record<string, unknown> = {}) {
   const ctx = createExecutionContext();
@@ -16,11 +17,12 @@ const base64url = (bytes: ArrayBuffer | Uint8Array) =>
   btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const cookieValues = (response: Response) => response.headers.getSetCookie().map(c => c.split(';')[0]);
 
-// Fakes GitHub's token endpoint and user API. Like GitHub, the user API only answers
-// for the token the token endpoint issued.
-function github(login: string) {
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+// Fakes the outside world: GitHub's token endpoint and user API (which, like GitHub, only
+// answer for the token issued), and an app's client metadata document.
+function network({ login = 'owner', clientDoc }: { login?: string; clientDoc?: Record<string, unknown> } = {}) {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     const request = new Request(input, init);
+    if (request.url === CLIENT_DOC && clientDoc) return Response.json(clientDoc);
     if (request.url === 'https://github.com/login/oauth/access_token') {
       return new Response('access_token=gh-token', { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
     }
@@ -33,17 +35,22 @@ function github(login: string) {
   });
 }
 
-type SignInOptions = { login?: string; tamperState?: (state: any) => any; keepBinding?: boolean };
+type SignInOptions = { login?: string; tamperState?: (state: any) => any; keepBinding?: boolean; clientDoc?: Record<string, unknown> };
 
-// Runs the whole sign-in as an MCP client would: register, approve, GitHub, token.
-async function signIn({ login = 'owner', tamperState, keepBinding = true }: SignInOptions = {}) {
-  const registered = await call(new Request(`${BASE}/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_name: 'Test Client', redirect_uris: [CLIENT_CB], token_endpoint_auth_method: 'none' }),
-  }));
-  expect(registered.status).toBe(201);
-  const { client_id } = await registered.json() as { client_id: string };
+// Runs the whole sign-in as an MCP client would: register (or, with clientDoc, identify
+// itself by a metadata document URL instead), approve, GitHub, token.
+async function signIn({ login = 'owner', tamperState, keepBinding = true, clientDoc }: SignInOptions = {}) {
+  network({ login, clientDoc });
+  let client_id = CLIENT_DOC;
+  if (!clientDoc) {
+    const registered = await call(new Request(`${BASE}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_name: 'Test Client', redirect_uris: [CLIENT_CB], token_endpoint_auth_method: 'none' }),
+    }));
+    expect(registered.status).toBe(201);
+    client_id = (await registered.json() as { client_id: string }).client_id;
+  }
 
   const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = base64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
@@ -68,11 +75,9 @@ async function signIn({ login = 'owner', tamperState, keepBinding = true }: Sign
 
   const approvedCookies = cookieValues(approved);
   const bindingOnly = approvedCookies.filter(c => c.startsWith('__Host-CONSENTED_STATE='));
-  github(login);
   const callback = await call(new Request(`${BASE}/callback?code=gh-code&state=${state}`, { headers: keepBinding ? { Cookie: bindingOnly.join('; ') } : {} }));
-  vi.restoreAllMocks();
   const result = { callback, approvedCookies, authorizeUrl };
-  if (callback.status !== 302) return result;
+  if (callback.status !== 302) { vi.restoreAllMocks(); return result; }
   const redirect = new URL(callback.headers.get('Location')!);
   expect(redirect.origin + redirect.pathname).toBe(CLIENT_CB);
   expect(redirect.searchParams.get('state')).toBe('client-state');
@@ -81,6 +86,7 @@ async function signIn({ login = 'owner', tamperState, keepBinding = true }: Sign
     method: 'POST',
     body: new URLSearchParams({ grant_type: 'authorization_code', code: redirect.searchParams.get('code')!, redirect_uri: CLIENT_CB, client_id, code_verifier: verifier }),
   }));
+  vi.restoreAllMocks();
   expect(token.status).toBe(200);
   const { access_token } = await token.json() as { access_token: string };
   return { ...result, accessToken: access_token };
@@ -119,6 +125,12 @@ describe('Worker entry point', () => {
     expect((await response.json() as any).code_challenge_methods_supported).toEqual(['S256']);
   });
 
+  test('advertises both client metadata documents and registration', async () => {
+    const metadata = await (await call(new Request(`${BASE}/.well-known/oauth-authorization-server`))).json() as any;
+    expect(metadata.client_id_metadata_document_supported).toBe(true);
+    expect(metadata.registration_endpoint).toBe(`${BASE}/register`);
+  });
+
   test('does not let another GitHub account finish signing in', async () => {
     const { callback } = await signIn({ login: 'someone-else' });
     expect(callback.status).toBe(403);
@@ -140,6 +152,39 @@ describe('Worker entry point', () => {
     for (const token of ['not-a-real-token', 'a:b:c']) {
       expect((await call(rpc(token, 'tools/list'))).status, token).toBe(401);
     }
+  });
+
+  describe('apps identified by a client metadata document', () => {
+    const doc = { client_id: CLIENT_DOC, client_name: 'Doc Client', redirect_uris: [CLIENT_CB], token_endpoint_auth_method: 'none' };
+    const clientKeys = async () => (await env.OAUTH_KV.list({ prefix: 'client:' })).keys.map(k => k.name);
+
+    test('sign in and use the tools without anything being registered', async () => {
+      const before = await clientKeys();
+      const { accessToken } = await signIn({ clientDoc: doc });
+      expect(await clientKeys()).toEqual(before);
+      const response = await call(rpc(accessToken, 'tools/list'));
+      expect((await rpcResult(response)).result.tools).toHaveLength(6);
+    });
+
+    test('show the name from the document on the approval page', async () => {
+      network({ clientDoc: doc });
+      const url = new URL(`${BASE}/authorize`);
+      for (const [k, v] of Object.entries({ response_type: 'code', client_id: CLIENT_DOC, redirect_uri: CLIENT_CB, code_challenge: 'x'.repeat(43), code_challenge_method: 'S256' })) url.searchParams.set(k, v);
+      expect(await (await call(new Request(url))).text()).toContain('Doc Client');
+    });
+
+    test.each([
+      ['a return address the document does not list', doc, 'https://attacker.example.test/cb'],
+      ['a document whose client_id is a different address', { ...doc, client_id: 'https://other.example.test/client.json' }, CLIENT_CB],
+      ['a document that cannot be fetched', undefined, CLIENT_CB],
+    ])('refuse %s', async (_case, clientDoc, redirectUri) => {
+      network({ clientDoc });
+      const url = new URL(`${BASE}/authorize`);
+      for (const [k, v] of Object.entries({ response_type: 'code', client_id: CLIENT_DOC, redirect_uri: redirectUri, code_challenge: 'x'.repeat(43), code_challenge_method: 'S256' })) url.searchParams.set(k, v);
+      const response = await call(new Request(url)).catch(e => e);
+      expect(response instanceof Response ? response.status : 500).toBeGreaterThanOrEqual(400);
+      expect(response instanceof Response ? response.headers.get('Location') ?? '' : '').not.toContain('attacker');
+    });
   });
 
   describe('after the owner signs in', () => {

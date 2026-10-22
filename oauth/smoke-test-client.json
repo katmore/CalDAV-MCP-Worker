@@ -1,0 +1,9 @@
+{
+  "client_id": "https://raw.githubusercontent.com/katmore/CalDAV-MCP-Worker/main/oauth/smoke-test-client.json",
+  "client_name": "CalDAV MCP Worker smoke test",
+  "client_uri": "https://github.com/katmore/CalDAV-MCP-Worker",
+  "redirect_uris": ["http://127.0.0.1/callback"],
+  "grant_types": ["authorization_code"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none"
+}

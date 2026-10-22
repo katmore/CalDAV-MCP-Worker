@@ -3,11 +3,15 @@
 //
 //   npm run smoke -- --url https://<worker-name>.<your-subdomain>.workers.dev --calendar "Home"
 //
-// It signs in the way an MCP client does (registers itself, opens your browser to approve
+// It signs in the way an MCP client does (identifies itself, opens your browser to approve
 // and sign in with GitHub, receives the code on a local port), then calls the calendar
 // tools directly: list calendars, create a test event a week from now, read it, edit it,
 // find it in a listing, delete it and confirm it is gone. The test event is deleted even if
 // a step fails. The access token is kept in memory only.
+//
+// To identify itself it uses the client metadata document in oauth/smoke-test-client.json,
+// published from this repository, when the Worker supports that; otherwise it registers.
+// --register forces registration, and --client-id points at a different document.
 //
 // SMOKE_URL and SMOKE_CALENDAR can be used instead of --url and --calendar.
 
@@ -17,12 +21,19 @@ import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
 
 const { values: args } = parseArgs({
-  options: { url: { type: 'string' }, calendar: { type: 'string' }, help: { type: 'boolean', short: 'h' } },
+  options: {
+    url: { type: 'string' },
+    calendar: { type: 'string' },
+    'client-id': { type: 'string' },
+    register: { type: 'boolean' },
+    help: { type: 'boolean', short: 'h' },
+  },
 });
 const base = (args.url ?? process.env.SMOKE_URL ?? '').replace(/\/+$/, '');
 const calendarName = args.calendar ?? process.env.SMOKE_CALENDAR;
+const CLIENT_DOCUMENT = 'https://raw.githubusercontent.com/katmore/CalDAV-MCP-Worker/main/oauth/smoke-test-client.json';
 if (args.help || !base) {
-  console.log('usage: npm run smoke -- --url https://<worker>.<subdomain>.workers.dev [--calendar "<name>"]');
+  console.log('usage: npm run smoke -- --url https://<worker>.<subdomain>.workers.dev [--calendar "<name>"] [--register | --client-id <document URL>]');
   process.exit(args.help ? 0 : 2);
 }
 
@@ -64,16 +75,28 @@ async function startCallbackServer(state) {
   };
 }
 
-// Registers this script as an OAuth client, has you sign in, and returns an access token.
+// Identifies this script to the Worker, either by its metadata document or by registering.
+async function clientId(metadata, redirectUri) {
+  if (!args.register && metadata.client_id_metadata_document_supported) {
+    console.log('Identifying with the client metadata document.');
+    return args['client-id'] ?? CLIENT_DOCUMENT;
+  }
+  if (!metadata.registration_endpoint) throw new Error('the Worker supports neither client metadata documents nor registration');
+  console.log('Registering as a new app.');
+  const client = await json(await fetch(metadata.registration_endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_name: 'CalDAV MCP Worker smoke test', redirect_uris: [redirectUri], token_endpoint_auth_method: 'none' }),
+  }), 'client registration');
+  return client.client_id;
+}
+
+// Has you sign in through the browser and returns an access token.
 async function signIn() {
   const metadata = await json(await fetch(`${base}/.well-known/oauth-authorization-server`), 'OAuth discovery');
   const state = randomBytes(16).toString('base64url');
   const callback = await startCallbackServer(state);
-  const client = await json(await fetch(metadata.registration_endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_name: 'CalDAV MCP Worker smoke test', redirect_uris: [callback.redirectUri], token_endpoint_auth_method: 'none' }),
-  }), 'client registration');
+  const client = { client_id: await clientId(metadata, callback.redirectUri) };
 
   const verifier = randomBytes(32).toString('base64url');
   const authorize = new URL(metadata.authorization_endpoint);

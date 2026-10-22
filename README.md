@@ -53,9 +53,13 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
   `ALLOWED_GITHUB_LOGIN` gets in.
 - **Calendar access.** The Worker logs in to your calendar provider with a
   username and password stored as [secrets](#secret).
-- **Storage.** The Worker keeps the tokens it issues to your assistant in a
-  [KV namespace](#kv-namespace), so the assistant stays signed in. It doesn't
-  store any calendar data.
+- **Connecting apps.** An app identifies itself either with a public metadata
+  document (its name and return address at a web address it controls), which
+  the current MCP spec prefers, or by registering with the Worker. Both work.
+- **Storage.** The Worker keeps app registrations and the tokens it issues to
+  your assistant in a [KV namespace](#kv-namespace), so the assistant stays
+  signed in. Apps that use a metadata document aren't stored. No calendar data
+  is stored.
 
 ### Tools
 
@@ -261,7 +265,8 @@ npm run smoke -- --url https://<worker-name>.<your-subdomain>.workers.dev --cale
 
 It opens your browser to sign in, then creates, edits and deletes a test event
 a week from now and prints a line per step. Leave out `--calendar` to see your
-calendar names.
+calendar names. It identifies itself with `oauth/smoke-test-client.json` from
+this repository's `main` branch; add `--register` to register instead.
 
 To check your assistant too, paste these prompts into it:
 
