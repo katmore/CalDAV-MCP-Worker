@@ -13,20 +13,18 @@ Let an AI assistant such as ChatGPT or Claude read and manage your calendar.
 You deploy this small server to your own Cloudflare account and connect your
 assistant to it; from then on you can ask things like "what's on my calendar
 Thursday?" or "move my 3pm to 4pm". It works with Apple iCloud calendars and
-other [CalDAV](#caldav) providers. Your calendar stays with your provider,
-nothing runs on your computer, and only you can sign in.
+other [CalDAV](#caldav) providers. Your calendar stays with your provider, and
+only you can sign in.
 
 ## Supported calendars
 
-Any CalDAV server that accepts a username and password at an `https://`
-address should work; plain `http://` servers are not supported. Set
-`CALDAV_URL` to your provider's address.
+Any CalDAV server that takes a username and password over `https://` should
+work. Set `CALDAV_URL` to your provider's address.
 
-Your username and password are only ever sent over https, and only to the
-`CALDAV_URL` host and any hosts you list in `CALDAV_TRUSTED_HOSTS`. Some
-providers hand you on to another server after the first request; iCloud does
-(to a server such as `p42-caldav.icloud.com`), so it needs `.icloud.com` there.
-A leading dot trusts that domain and everything under it.
+Your username and password are only sent to the `CALDAV_URL` host and to hosts
+listed in `CALDAV_TRUSTED_HOSTS`. iCloud moves you to a server like
+`p42-caldav.icloud.com` after the first request, so it needs `.icloud.com`
+there. A leading dot covers the domain and all its subdomains.
 
 | Provider | `CALDAV_URL` | `CALDAV_TRUSTED_HOSTS` | Password to use |
 | --- | --- | --- | --- |
@@ -36,9 +34,8 @@ A leading dot trusts that domain and everything under it.
 | Nextcloud | `https://<your-server>/remote.php/dav` | none | App password from Nextcloud security settings |
 | Radicale, Baïkal and other self-hosted servers | Your server's CalDAV URL | none | Your account password |
 
-iCloud has been tested end to end (see [VALIDATION.md](VALIDATION.md)); the
-others should work but are untested. Google Calendar is not supported: it only
-allows calendar access through its own sign-in system, not with a password.
+Only iCloud has been tested (see [VALIDATION.md](VALIDATION.md)). Google
+Calendar won't work because it doesn't allow password access.
 
 ## How it works
 
@@ -52,14 +49,13 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
                           └── GitHub: checks it's you signing in
 ```
 
-- **Sign-in.** The Worker uses [OAuth](#oauth) with your GitHub account to
-  confirm it's you. It only reads your public GitHub profile (username, name and
-  email); it gets no access to your repositories. Your username is checked
-  when you sign in and again on every request.
+- **Sign-in.** You sign in with GitHub ([OAuth](#oauth)). Only the account in
+  `ALLOWED_GITHUB_LOGIN` gets in.
 - **Calendar access.** The Worker logs in to your calendar provider with a
   username and password stored as [secrets](#secret).
-- **Storage.** The only thing the Worker stores is sign-in records, kept in a
-  [KV namespace](#kv-namespace).
+- **Storage.** The Worker keeps the tokens it issues to your assistant in a
+  [KV namespace](#kv-namespace), so the assistant stays signed in. It doesn't
+  store any calendar data.
 
 ### Tools
 
@@ -74,7 +70,7 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
 
 ### Safety rules and limits
 
-These are enforced by the server itself, whatever the assistant asks for.
+The server enforces these no matter what the assistant asks for.
 
 - **Only your real calendars.** Every request is checked against the calendars
   on your account at that moment, so the assistant can't act on a calendar or
@@ -90,54 +86,43 @@ These are enforced by the server itself, whatever the assistant asks for.
 - **What can't be deleted:** invitations. Deleting a repeating event removes
   the whole series, so the assistant has to ask for whole-series deletion
   explicitly; single occurrences can't be changed or removed on their own.
-- **Repeating events may be incomplete.** Listings that might be missing
-  occurrences of a repeating event, or that include events whose timezone isn't
-  saved with them, come back flagged `capped: true` so the assistant knows not to treat
-  them as a free/busy answer. Double-check repeating events against your
-  calendar app.
+- **Repeating events may be incomplete.** A listing that might be missing
+  occurrences, or has events without a saved timezone, comes back with
+  `capped: true`. Check repeating events against your calendar app.
 
-**Approving changes is up to your assistant.** The server marks
-`update_event` and `delete_event` as destructive so that assistants know to ask
-you before using them, but it can't see whether you said yes. `delete_event`
-also requires `confirm: "DELETE"`: a deliberate cue to the assistant that
-deleting is serious, not proof that you approved, since the assistant fills it
-in itself.
+Your assistant is the one that asks before changing anything. `update_event`
+and `delete_event` are marked as destructive so assistants know to check with
+you first. `delete_event` also needs `confirm: "DELETE"`, which the assistant
+fills in itself.
 
 ### Security notes
 
-- Your calendar password usually unlocks more than these six tools use: often
-  every calendar on the account, and sometimes contacts. That's why a dedicated
-  app-specific password is recommended; you can revoke it at any time without
-  changing your main password.
-- Your calendar username and password are only sent over https, to the
-  `CALDAV_URL` host and the hosts in `CALDAV_TRUSTED_HOSTS`. Every request is
-  checked, including addresses the calendar server hands back and each step of
-  a redirect.
-- The Worker doesn't keep your GitHub sign-in token, and its error messages
-  never include passwords or internal details.
-- Cloudflare's request logging is turned off for the Worker, so your calendar
-  requests aren't logged there.
+- Your calendar password usually opens more than this Worker uses, such as
+  every calendar and sometimes contacts. Use an app-specific password so you
+  can revoke it on its own.
+- Every request to your calendar provider is checked for https and a trusted
+  host, including redirects and addresses the server sends back.
+- The Worker doesn't keep your GitHub token, and its error messages don't
+  include passwords or internal details.
+- Cloudflare request logging is off for the Worker.
 
 ### Social engineering and prompt injection
 
-- **Prompt injection:** calendar text (titles, descriptions, locations, and
-  invitations from other people) reaches the assistant as-is, and may contain
-  instructions aimed at it. Invitations can't be edited or deleted; every other
-  write relies on the assistant asking you first.
-- **Approval phishing:** only your GitHub account can complete a sign-in, but
-  anyone can start one. If someone sends you a link that connects *their* app
-  to your Worker and you approve it and sign in, their app gets access to your
-  calendar. Only approve the connection page right after you've started
-  connecting your own assistant.
+- **Prompt injection:** event text, including invitations from other people,
+  goes to your assistant as-is and could contain instructions aimed at it.
+  Invitations can't be edited or deleted; other changes rely on your assistant
+  asking you first.
+- **Approval phishing:** anyone can send you a link to connect their app to
+  your Worker. If you approve it and sign in, their app gets your calendar.
+  Only approve the connection page when you've just started connecting your
+  own assistant.
 
 ## Setup
 
 ### Prerequisites
 
-This guide assumes you're comfortable running commands in a terminal, cloning
-a Git repository and editing a config file. No prior experience with
-Cloudflare, OAuth or MCP is needed; the [glossary](#glossary) covers the terms
-that come up.
+You should be comfortable with a terminal, Git and editing a config file. You
+don't need to know Cloudflare, OAuth or MCP; see the [glossary](#glossary).
 
 You'll need:
 
@@ -161,21 +146,20 @@ browser to connect it to your Cloudflare account.
 
 ### 2. Create your local config
 
-The committed `wrangler.jsonc` holds placeholders. Your real settings go in a
-copy that Git ignores, so they never end up in the repo:
+`wrangler.jsonc` only has placeholders. Put your real settings in a copy that
+Git ignores:
 
 ```sh
 cp wrangler.jsonc wrangler.local.jsonc
 ```
 
-Create the storage the Worker uses for sign-in records:
+Create the storage the Worker uses for sign-in tokens:
 
 ```sh
 npx wrangler kv namespace create OAUTH_KV -c wrangler.local.jsonc
 ```
 
-It prints a short config snippet containing an `id`. If it offers to update
-your config file for you, say no; you'll add the id by hand.
+It prints an `id`. If it offers to update your config file, say no.
 
 Then edit `wrangler.local.jsonc`:
 
@@ -184,8 +168,7 @@ Then edit `wrangler.local.jsonc`:
 - `CALDAV_URL` and, if your provider needs it, `CALDAV_TRUSTED_HOSTS`: from the
   [Supported calendars](#supported-calendars) table.
 - `name` (optional): the Worker's name, which becomes part of its address.
-  Choose it now: renaming after the first deploy creates a second Worker and
-  means updating the GitHub app in step 4.
+  Pick it now, since renaming later creates a second Worker.
 
 `npm run deploy` uses this file. When you run `wrangler` directly, add
 `-c wrangler.local.jsonc` so it targets your Worker.
@@ -196,14 +179,11 @@ Then edit `wrangler.local.jsonc`:
 npm run deploy
 ```
 
-The first time, wrangler may ask you to choose a name for your account's
-`workers.dev` addresses (your subdomain). When it finishes, it prints your
-Worker's address near the end of the output. It looks like
-`https://<worker-name>.<your-subdomain>.workers.dev`, and you'll use it in the
-next steps.
+The first time, wrangler may ask you to pick a `workers.dev` subdomain. At the
+end it prints your Worker's address, like
+`https://<worker-name>.<your-subdomain>.workers.dev`. You'll need it next.
 
-Deploying before the secrets are set is safe: until they are, nobody can sign
-in or reach your calendar.
+Nobody can sign in until the secrets are set, so deploying now is safe.
 
 ### 4. Register a GitHub OAuth app
 
@@ -214,11 +194,8 @@ In GitHub, go to your account's developer settings and create a new
 - **Authorization callback URL:** your Worker's address followed by `/callback`
   (exactly, starting with `https://` and with no trailing slash)
 
-After creating it, note the **Client ID** and generate a **client secret**.
-GitHub shows the secret only once, so keep it handy for the next step.
-
-An OAuth app has a single callback URL. If your Worker's address changes later,
-edit the existing app's URLs instead of creating a new one.
+Then copy the **Client ID** and generate a **client secret**. GitHub only shows
+the secret once. If your Worker's address changes later, edit this app's URLs.
 
 ### 5. Store your secrets
 
@@ -245,8 +222,7 @@ If you don't have `openssl` (for example on Windows), Node can do it:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Then run these. Each one prompts for its value, so nothing lands in your shell
-history:
+Then run these. Each one asks for its value:
 
 ```sh
 npx wrangler secret put GITHUB_CLIENT_ID -c wrangler.local.jsonc
@@ -272,27 +248,22 @@ If it asks for an authentication type, choose OAuth. When you connect, a page
 from your Worker asks you to approve the connection, then GitHub asks you to
 sign in. Sign in as the account you set in `ALLOWED_GITHUB_LOGIN`.
 
-Some assistants only offer custom connectors on certain plans or behind a
-developer setting; check your assistant's documentation if you don't see the
-option.
+Some assistants only offer this on certain plans or behind a developer
+setting.
 
 ### 7. Try it
 
-For a quick automated check of the Worker itself, run:
+To check the Worker directly, run:
 
 ```sh
 npm run smoke -- --url https://<worker-name>.<your-subdomain>.workers.dev --calendar "<calendar name>"
 ```
 
-It opens your browser to approve and sign in, then lists your calendars and
-creates, reads, edits, finds and deletes a test event a week from now, printing
-a line per step. The test event is removed even if a step fails. Leave out
-`--calendar` to just see the calendar names.
+It opens your browser to sign in, then creates, edits and deletes a test event
+a week from now and prints a line per step. Leave out `--calendar` to see your
+calendar names.
 
-To check your assistant as well, paste these into it in order, and again after
-each deploy. Stop at
-the first failure, compare each answer with your calendar app, and use a
-calendar you don't mind testing in.
+To check your assistant too, paste these prompts into it:
 
 1. List your calendars. They should match your calendar app.
 
@@ -370,9 +341,7 @@ npm run deploy
 ```
 
 If you change the code, run `npm run type-check && npm test` before deploying.
-The tests run in Cloudflare's runtime and fail if any code in `src/` is
-untested or if the copied Cloudflare sign-in code changes without a recorded
-patch. [VALIDATION.md](VALIDATION.md) explains what is tested and how.
+See [VALIDATION.md](VALIDATION.md) for how testing works.
 
 ## Glossary
 

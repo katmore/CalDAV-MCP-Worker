@@ -31,7 +31,7 @@ replaced by fakes, and every secret has a test-only value in
 | File | Covers |
 | --- | --- |
 | `test/safety.test.ts` | The owner check; the calendar boundary, one test per rule (other hosts, ports, `http`, credentials, query strings, fragments, `..` and encoded slashes, nested folders, non-`.ics` files, look-alike sibling folders); refused saves never counting as success; what counts as a repeating event; timezones staying inside the event that defines them |
-| `test/calendar.test.ts` | All six calendar tools against a fake calendar server: what is written and where, the version sent with each change, refused saves, edits keeping alarms and unknown fields, the refusal rules for repeating events, all-day events and invitations, the `capped` flag, the 90-day, 250-event and 500-occurrence limits, input validation (including that deletes carry `confirm: "DELETE"`, a cue to the assistant rather than proof of approval), the read-only and destructive markers on each tool, and error messages that hide internal details |
+| `test/calendar.test.ts` | All six calendar tools against a fake calendar server: what is written and where, the version sent with each change, refused saves, edits keeping alarms and unknown fields, the refusal rules for repeating events, all-day events and invitations, the `capped` flag, the 90-day, 250-event and 500-occurrence limits, input validation (including that deletes need `confirm: "DELETE"`), the read-only and destructive markers on each tool, and error messages that hide internal details |
 | `test/oauth-utils.test.ts` | Sign-in building blocks: CSRF tokens, one-time sign-in state tied to the browser that started it, the signed "approved apps" cookie (including forged and foreign cookies), HTML escaping and link filtering on the approval page, and the GitHub token exchange |
 | `test/github-handler.test.ts` | The sign-in pages: approval, the GitHub callback, refusing any GitHub account but the owner, failed GitHub responses, replayed or cross-browser callbacks, and hidden internal errors |
 | `test/transport.test.ts` | The CalDAV network boundary, using the real CalDAV client against a fake network: `CALDAV_URL` must be https; discovery, server-listed addresses and every redirect step stay on https and on trusted hosts; the network is never left to follow redirects unchecked; refusals are reported without addresses or credentials; create, update and delete still send their version checks |
@@ -50,9 +50,8 @@ replaced by fakes, and every secret has a test-only value in
 
 ### Checking the tests themselves
 
-Full coverage only shows that code ran, not that a test would notice it
-breaking. So the safety rules were also checked by deliberately breaking each
-one and confirming a test fails. Each of these 23 breakages was caught:
+Full coverage only shows that code ran. To check the tests would notice a
+safety rule breaking, each rule was broken on purpose and a test had to fail. Each of these 23 breakages was caught:
 
 - saves refused by the server reported as success (create, update, delete)
 - calendar boundary rules removed (fragments, non-`.ics` files, credentials, backslashes)
@@ -153,9 +152,8 @@ new version, repeat it with the prompts in the README's
 ## Remaining limits
 
 - Only iCloud has been tested live. Other CalDAV providers are untested.
-- Repeating events, timezones and all-day events are covered by automated
-  tests with sample data, but not against a wide range of real calendars, and
-  daylight-saving transitions are not specifically tested. Treat results flagged `capped` as incomplete, not as free/busy
-  answers.
-- Editing repeating events, all-day events and invitations is deliberately
-  refused.
+- Repeating events, timezones and all-day events are tested with sample data
+  only, and daylight-saving changes aren't tested specifically. Treat results
+  flagged `capped` as incomplete.
+- Editing repeating events, all-day events and invitations is refused on
+  purpose.
