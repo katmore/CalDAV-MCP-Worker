@@ -89,84 +89,198 @@ MCP client ──OAuth──▶ Cloudflare Worker ──CalDAV (username + passw
 
 ## How to set it up
 
-You need a Cloudflare account, a GitHub account, a CalDAV calendar account,
-and Node.js 22+.
+This takes about 20 minutes. You'll need:
 
-1. Install dependencies and sign in to Cloudflare:
+- A Cloudflare account (the free plan is enough for personal use)
+- A GitHub account, used only to sign in to your server
+- A calendar account that supports CalDAV (see [Supported calendars](#supported-calendars))
+- Git and Node.js 22 or newer on your computer
 
-   ```sh
-   npm ci
-   npx wrangler login
-   ```
+The big picture: you deploy the Worker first so you learn its address, register
+that address with GitHub so it can handle sign-in, store your credentials as
+Cloudflare secrets, then point your AI assistant at it. Until the secrets are
+set, nobody can sign in or reach your calendar, so the early deploy is safe.
 
-2. Create the KV namespace and note its id:
+### 1. Get the code
 
-   ```sh
-   npx wrangler kv namespace create OAUTH_KV
-   ```
+```sh
+git clone https://github.com/ackspony/CalDAV-MCP-Worker.git
+cd CalDAV-MCP-Worker
+npm ci
+npx wrangler login
+```
 
-3. Copy `wrangler.jsonc` to `wrangler.local.jsonc` (gitignored) and fill in the
-   KV namespace id and, optionally, the Worker name. The `deploy`, `dev` and
-   `start` npm scripts use this file.
+`wrangler` is Cloudflare's command-line tool; `login` opens your browser to
+connect it to your Cloudflare account. On a machine without a browser, create
+a Cloudflare API token instead and set it as `CLOUDFLARE_API_TOKEN`.
 
-   Set `CALDAV_URL` to your provider's CalDAV address (the example value is a
-   placeholder). There is no fallback, and calendar requests are rejected if it
-   is missing.
+### 2. Create your local config
 
-4. Find your workers.dev subdomain in the Cloudflare Workers dashboard, then
-   create a GitHub OAuth App at https://github.com/settings/developers:
-   - Homepage: `https://<worker-name>.<your-subdomain>.workers.dev`
-   - Callback: `https://<worker-name>.<your-subdomain>.workers.dev/callback`
+The committed `wrangler.jsonc` holds placeholders. Your real settings go in a
+copy that Git ignores, so they never end up in the repo:
 
-5. Create a password for this connector at your calendar provider. If it
-   offers app-specific passwords, create one dedicated to this connector.
+```sh
+cp wrangler.jsonc wrangler.local.jsonc
+```
 
-6. Set the secrets from your own terminal (or the Cloudflare dashboard). Each
-   command prompts for its value:
+Create the storage the Worker uses for sign-in sessions (a KV namespace):
 
-   ```sh
-   npx wrangler secret put GITHUB_CLIENT_ID -c wrangler.local.jsonc
-   npx wrangler secret put GITHUB_CLIENT_SECRET -c wrangler.local.jsonc
-   npx wrangler secret put COOKIE_ENCRYPTION_KEY -c wrangler.local.jsonc
-   npx wrangler secret put ALLOWED_GITHUB_LOGIN -c wrangler.local.jsonc
-   npx wrangler secret put CALDAV_USERNAME -c wrangler.local.jsonc
-   npx wrangler secret put CALDAV_PASSWORD -c wrangler.local.jsonc
-   ```
+```sh
+npx wrangler kv namespace create OAUTH_KV -c wrangler.local.jsonc
+```
 
-   - `ALLOWED_GITHUB_LOGIN`: the one GitHub login allowed to use the tools. If
-     it is empty or unset, all access is denied.
-   - `COOKIE_ENCRYPTION_KEY`: a random 32-byte hex value, e.g.
-     `openssl rand -hex 32`.
+It prints a short config snippet containing an `id`. If it offers to add the
+binding to your config for you, say no; you'll add the id by hand.
 
-   Never put secrets in source files, command arguments or Git. `.dev.vars*`
-   and `.env*` are gitignored.
+Then edit `wrangler.local.jsonc`:
 
-7. Check, then deploy:
+- `id` under `kv_namespaces`: the id printed by the command above. Leave
+  `"binding": "OAUTH_KV"` as it is; the code uses that name.
+- `CALDAV_URL`: your provider's address from the
+  [Supported calendars](#supported-calendars) table.
+- `name` (optional): the Worker's name, which becomes part of its address.
+  Choose it now: renaming after the first deploy creates a second Worker and
+  means updating the GitHub app in step 4.
 
-   ```sh
-   npm run type-check && npm test
-   npx wrangler deploy --dry-run -c wrangler.local.jsonc
-   npm run deploy
-   ```
+`npm run deploy` uses this file. When you run `wrangler` directly, add
+`-c wrangler.local.jsonc` so it targets your Worker. Keep a private backup of
+this file, since a fresh clone won't have it.
 
-8. In your MCP client, add a remote MCP server at
-   `https://<worker-name>.<your-subdomain>.workers.dev/mcp` using OAuth, and
-   authorize as the allowlisted GitHub user.
+### 3. Deploy once to get your address
 
-### Check it before relying on it
+```sh
+npm run deploy
+```
 
-- An unauthenticated MCP initialize request must return 401.
-- Complete a real OAuth login from your client; a different GitHub account
-  must be refused.
-- List calendars and compare a narrow event range with your calendar app,
-  including DST changes and recurrence exceptions. Treat calendar text as
-  untrusted data.
-- In a writable calendar, create a disposable event, read it back, update its
-  title, read it again, then delete only that event using its latest ETag and
-  confirm it is gone. A timeout is ambiguous: read before retrying a creation
-  to avoid duplicates.
+The first time, wrangler may ask you to pick a `workers.dev` subdomain for
+your account. When it finishes, it prints your Worker's address near the end
+of the output. It looks like
+`https://<worker-name>.<your-subdomain>.workers.dev`, and you'll use it in the
+next steps.
 
-See [VALIDATION.md](VALIDATION.md) for what has been verified so far.
+### 4. Register a GitHub OAuth app
+
+This lets your Worker ask GitHub "who is signing in?". It gets no access to
+your repositories.
+
+In GitHub, go to your account's developer settings and create a new **OAuth
+App** (not a GitHub App) with:
+
+- **Homepage URL:** your Worker's address
+- **Authorization callback URL:** your Worker's address followed by `/callback`
+  (exactly, starting with `https://` and with no trailing slash)
+
+After creating it, note the **Client ID** and generate a **client secret**.
+GitHub shows the secret only once, so keep it handy for the next step.
+
+An OAuth app has a single callback URL. If your Worker's address changes later,
+edit the existing app's URLs instead of creating a new one.
+
+### 5. Store your secrets
+
+Have these values ready:
+
+| Secret | What to enter |
+| --- | --- |
+| `GITHUB_CLIENT_ID` | The Client ID from step 4 |
+| `GITHUB_CLIENT_SECRET` | The client secret from step 4 |
+| `COOKIE_ENCRYPTION_KEY` | A random value (generate it below) |
+| `ALLOWED_GITHUB_LOGIN` | Your GitHub username. Only this account can use the server; if it's empty, nobody can |
+| `CALDAV_USERNAME` | Your calendar account's username, usually your email address (for iCloud, your Apple Account email) |
+| `CALDAV_PASSWORD` | A password for this connector. Use an app-specific password if your provider offers them (most hosted providers, including iCloud, Fastmail and Yahoo, require one) |
+
+Generate the cookie key now so you can paste it in:
+
+```sh
+openssl rand -hex 32
+```
+
+If you don't have `openssl` (for example on Windows), Node can do it:
+
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Then run each command. It prompts for the value, so the value never appears in
+your shell history:
+
+```sh
+npx wrangler secret put GITHUB_CLIENT_ID -c wrangler.local.jsonc
+npx wrangler secret put GITHUB_CLIENT_SECRET -c wrangler.local.jsonc
+npx wrangler secret put COOKIE_ENCRYPTION_KEY -c wrangler.local.jsonc
+npx wrangler secret put ALLOWED_GITHUB_LOGIN -c wrangler.local.jsonc
+npx wrangler secret put CALDAV_USERNAME -c wrangler.local.jsonc
+npx wrangler secret put CALDAV_PASSWORD -c wrangler.local.jsonc
+```
+
+Secrets take effect immediately; you don't need to deploy again.
+
+### 6. Connect your AI assistant
+
+In your assistant's settings, look for the option to add a custom connector or
+remote MCP server. Enter your Worker's address followed by `/mcp`:
+
+```
+https://<worker-name>.<your-subdomain>.workers.dev/mcp
+```
+
+If it asks for an authentication type, choose OAuth. When you connect, a page
+from your Worker asks you to approve the client, then GitHub asks you to sign
+in. Sign in as the account you set in `ALLOWED_GITHUB_LOGIN`.
+
+Some assistants only offer custom connectors on certain plans or behind a
+developer setting; check your assistant's documentation if you don't see the
+option.
+
+### 7. Try it
+
+Ask your assistant to list your calendars, then to show this week's events.
+Compare the answer with your usual calendar app.
+
+To test changes safely, ask it to create a test event, rename it, and delete
+it, checking your calendar app after each step. Use a calendar you don't mind
+experimenting in.
+
+A few things to know before relying on it:
+
+- Results marked `capped: true` may be missing recurring events, so don't
+  treat them as proof that you're free.
+- Recurring events, all-day events and invitations can't be edited (see
+  [Safety rules and limits](#safety-rules-and-limits)).
+- If a request times out while creating an event, have the assistant check
+  whether it was created before trying again, to avoid duplicates.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+| --- | --- |
+| "Not authorized" after signing in to GitHub, or "Forbidden" later | You signed in as a different account than `ALLOWED_GITHUB_LOGIN`, or that secret isn't set or was changed |
+| GitHub says the redirect URI isn't valid | The callback URL in the GitHub OAuth app doesn't exactly match your Worker's address plus `/callback` |
+| "CALDAV_URL must be set" | `CALDAV_URL` is empty or missing in `wrangler.local.jsonc`; fix it and deploy again |
+| "CalDAV operation failed" on every request | Wrong `CALDAV_USERNAME`, `CALDAV_PASSWORD` or `CALDAV_URL` (or it's still the `caldav.example.com` placeholder), or your provider requires an app-specific password |
+| `wrangler secret put` offers to create a new Worker | You changed `name` and left out `-c wrangler.local.jsonc`, so it's targeting the placeholder name |
+| `wrangler secret put` offers to create a new Worker, and you did use `-c` | You skipped the deploy in step 3, so the Worker doesn't exist yet |
+
+Sign-in errors appear in your browser; the `CALDAV_URL` and "CalDAV operation
+failed" errors appear in your assistant's tool results.
+
+To check the Worker is deployed and responding, without signing in, this
+should return `401 Unauthorized`:
+
+```sh
+curl -i -X POST https://<worker-name>.<your-subdomain>.workers.dev/mcp
+```
+
+### Updating
+
+```sh
+git pull
+npm ci
+npm run deploy
+```
+
+If you change the code, run `npm run type-check && npm test` before deploying.
+See [VALIDATION.md](VALIDATION.md) for what has been tested so far.
 
 ## License
 
