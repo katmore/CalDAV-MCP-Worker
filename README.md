@@ -59,20 +59,27 @@ MCP client ──OAuth──▶ Cloudflare Worker ──CalDAV (username + passw
 
 ### Safety rules and limits
 
-- Calendar and resource IDs must belong to a calendar freshly discovered from
-  the connected CalDAV account.
-- Writes check the HTTP status. Updates and deletes require the ETag returned by
-  a prior read and use DAV conditional writes; new resources use If-None-Match.
-- Updates preserve unknown iCalendar properties, and refuse recurrence
-  (including RDATE), all-day events, invitations and duration-based time edits.
-- Deletion refuses invitations, and deleting a recurring resource requires
-  explicit whole-series confirmation. Individual occurrences cannot be edited.
-- Reads register embedded VTIMEZONE data and skip cancelled occurrences.
-  Recurrence expansion has limits and marks possibly incomplete results with
-  `capped: true`; never infer availability from such a result. Floating times
-  need manual timezone interpretation. This is not a complete recurrence or
-  scheduling engine; verify against your provider's real data before relying on recurring
-  results.
+These are enforced by the server itself, whatever the assistant asks for.
+
+- **Only your real calendars.** Every request is checked against the calendars
+  on your account at that moment, so the assistant can't act on a calendar or
+  event address it made up.
+- **No silent overwrites.** Before changing or deleting an event, the assistant
+  must read it first. If the event changed in the meantime (say, you edited it
+  on your phone), the change is refused instead of overwriting yours. Creating
+  an event never replaces an existing one, and every write is checked to make
+  sure the server actually accepted it.
+- **What can't be edited:** repeating events, all-day events, invitations, and
+  events stored with a length instead of an end time. Edits keep any details
+  the server doesn't understand, such as alarms.
+- **What can't be deleted:** invitations. Deleting a repeating event removes
+  the whole series and needs an extra confirmation; single occurrences can't be
+  changed or removed on their own.
+- **Repeating events may be incomplete.** When listing events, results that
+  might be missing occurrences are marked `capped: true`. Don't use those to
+  decide whether you're free. Events saved without a timezone ("floating"
+  times) are also ambiguous. This isn't a full scheduling engine, so double-check
+  repeating events against your calendar app before relying on them.
 
 ### Security notes
 
