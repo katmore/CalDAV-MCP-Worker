@@ -4,8 +4,8 @@ Let an AI assistant such as ChatGPT or Claude read and manage your calendar.
 You deploy this small server to your own Cloudflare account and connect your
 assistant to it; from then on you can ask things like "what's on my calendar
 Thursday?" or "move my 3pm to 4pm". It works with Apple iCloud calendars and
-other [CalDAV](#caldav) providers. Your calendar stays with your provider, nothing runs on
-your computer, and only you can sign in.
+other [CalDAV](#caldav) providers. Your calendar stays with your provider,
+nothing runs on your computer, and only you can sign in.
 
 ## Supported calendars
 
@@ -39,13 +39,12 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
 
 - **Sign-in.** The Worker uses [OAuth](#oauth) with your GitHub account to
   confirm it's you. It only reads your public GitHub profile (username, name and
-  email); it gets no access to your repositories. Your username is checked when you sign in and again on
-  every request.
+  email); it gets no access to your repositories. Your username is checked
+  when you sign in and again on every request.
 - **Calendar access.** The Worker logs in to your calendar provider with a
   username and password stored as [secrets](#secret).
 - **Storage.** The only thing the Worker stores is sign-in records, kept in a
-  [KV namespace](#kv-namespace). It's built from Cloudflare's official
-  GitHub sign-in MCP starter.
+  [KV namespace](#kv-namespace).
 
 ### Tools
 
@@ -92,11 +91,8 @@ These are enforced by the server itself, whatever the assistant asks for.
   never include passwords or internal details.
 - Cloudflare's request logging is turned off for the Worker, so your calendar
   requests aren't logged there.
-- Any charges depend on your Cloudflare plan and usage.
 
 ### Social engineering and prompt injection
-
-These risks come from people and content rather than from flaws in the code.
 
 - **Prompt injection:** calendar text (titles, descriptions, locations, and
   invitations from other people) reaches the assistant as-is, and may contain
@@ -110,8 +106,6 @@ These risks come from people and content rather than from flaws in the code.
   connecting your own assistant.
 
 ## Setup
-
-Setup takes about 20 minutes.
 
 ### Prerequisites
 
@@ -138,8 +132,9 @@ npx wrangler login
 ```
 
 [`wrangler`](#wrangler) is Cloudflare's command-line tool; `login` opens your
-browser to connect it to your Cloudflare account. On a machine without a browser, create
-a Cloudflare API token instead and set it as `CLOUDFLARE_API_TOKEN`.
+browser to connect it to your Cloudflare account. On a machine without a
+browser, create a Cloudflare API token instead and set it as
+`CLOUDFLARE_API_TOKEN`.
 
 ### 2. Create your local config
 
@@ -180,8 +175,8 @@ npm run deploy
 ```
 
 The first time, wrangler may ask you to choose a name for your account's
-`workers.dev` addresses (your subdomain). When it finishes, it prints your Worker's address near the end
-of the output. It looks like
+`workers.dev` addresses (your subdomain). When it finishes, it prints your
+Worker's address near the end of the output. It looks like
 `https://<worker-name>.<your-subdomain>.workers.dev`, and you'll use it in the
 next steps.
 
@@ -189,9 +184,6 @@ Deploying before the secrets are set is safe: until they are, nobody can sign
 in or reach your calendar.
 
 ### 4. Register a GitHub OAuth app
-
-This lets your Worker ask GitHub "who is signing in?". It gets no access to
-your repositories.
 
 In GitHub, go to your account's developer settings and create a new
 [**OAuth App**](#oauth) (not a GitHub App) with:
@@ -271,21 +263,16 @@ To test changes safely, ask it to create a test event, rename it, and delete
 it, checking your calendar app after each step. Use a calendar you don't mind
 experimenting in.
 
-A few things to know before relying on it:
-
-- Results marked `capped: true` may be missing recurring events, so don't
-  treat them as proof that you're free.
-- Recurring events, all-day events and invitations can't be edited (see
-  [Safety rules and limits](#safety-rules-and-limits)).
-- If a request times out while creating an event, have the assistant check
-  whether it was created before trying again, to avoid duplicates.
+If a request times out while creating an event, have the assistant check
+whether it was created before trying again, to avoid duplicates. See
+[Safety rules and limits](#safety-rules-and-limits) for what it can't do.
 
 ### Troubleshooting
 
 | Symptom | Likely cause |
 | --- | --- |
 | "Not authorized" after signing in to GitHub, or "Forbidden" later | You signed in as a different account than `ALLOWED_GITHUB_LOGIN`, or that secret isn't set or was changed |
-| GitHub says the redirect URI isn't valid | The callback URL (GitHub also calls it the redirect URI) in the GitHub OAuth app doesn't exactly match your Worker's address plus `/callback` |
+| GitHub says the redirect URI isn't valid | The callback URL in the GitHub OAuth app doesn't exactly match your Worker's address plus `/callback` |
 | "CALDAV_URL must be set" | `CALDAV_URL` is empty or missing in `wrangler.local.jsonc`; fix it and deploy again |
 | "CalDAV operation failed" on every request | Wrong `CALDAV_USERNAME`, `CALDAV_PASSWORD` or `CALDAV_URL` (or it's still the `caldav.example.com` placeholder), or your provider requires an app-specific password |
 | `wrangler secret put` offers to create a new Worker | You changed `name` and left out `-c wrangler.local.jsonc`, so it's targeting the placeholder name |
