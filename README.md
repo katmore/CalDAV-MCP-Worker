@@ -50,7 +50,9 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
 ```
 
 - **Sign-in.** You sign in with GitHub ([OAuth](#oauth)). Only the account in
-  `ALLOWED_GITHUB_LOGIN` gets in.
+  `ALLOWED_GITHUB_LOGIN` gets in. GitHub is used because it's a simple,
+  well-supported way to prove who the single owner is, with nothing extra to
+  run. Sign in with Apple is planned as an alternative.
 - **Calendar access.** The Worker logs in to your calendar provider with a
   username and password stored as [secrets](#secret).
 - **Connecting apps.** An app identifies itself with a public metadata
