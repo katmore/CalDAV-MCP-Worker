@@ -4,47 +4,48 @@ Let an AI assistant such as ChatGPT or Claude read and manage your calendar.
 You deploy this small server to your own Cloudflare account and connect your
 assistant to it; from then on you can ask things like "what's on my calendar
 Thursday?" or "move my 3pm to 4pm". It works with Apple iCloud calendars and
-other CalDAV providers. Your calendar stays with your provider, nothing runs on
+other [CalDAV](#caldav) providers. Your calendar stays with your provider, nothing runs on
 your computer, and only you can sign in.
 
 ## Supported calendars
 
-Any CalDAV server that accepts a username and password (HTTP Basic auth) over
-HTTPS should work; plain `http://` servers are not supported. Set `CALDAV_URL`
-to your provider's address:
+Any CalDAV server that accepts a username and password at an `https://`
+address should work; plain `http://` servers are not supported. Set
+`CALDAV_URL` to your provider's address:
 
 | Provider | `CALDAV_URL` | Password to use |
 | --- | --- | --- |
-| Apple iCloud | `https://caldav.icloud.com` | App-specific password from account.apple.com |
+| Apple iCloud | `https://caldav.icloud.com` | [App-specific password](#app-specific-password) from account.apple.com |
 | Fastmail | `https://caldav.fastmail.com` | App password from Fastmail settings |
 | Yahoo Calendar | `https://caldav.calendar.yahoo.com` | App password from Yahoo account security |
 | Nextcloud | `https://<your-server>/remote.php/dav` | App password from Nextcloud security settings |
 | Radicale, Baïkal and other self-hosted servers | Your server's CalDAV URL | Your account password |
 
 iCloud has been tested end to end (see [VALIDATION.md](VALIDATION.md)); the
-others should work but are untested. Google Calendar is not supported, because
-its CalDAV endpoint requires OAuth rather than a password.
+others should work but are untested. Google Calendar is not supported: it only
+allows calendar access through its own sign-in system, not with a password.
 
 ## How it works
 
-The server is a single-owner Cloudflare Worker that exposes a CalDAV calendar as an
-OAuth-protected remote [MCP](https://modelcontextprotocol.io) server:
+The server is a [Cloudflare Worker](#cloudflare-worker) that sits between your
+AI assistant and your calendar provider. Your assistant talks to it using
+[MCP](#mcp), and it talks to your calendar using CalDAV:
 
 ```
-MCP client ──OAuth──▶ Cloudflare Worker ──CalDAV (username + password)──▶ CalDAV server
-                         │
-                         └─ GitHub OAuth: signs in the one allowed owner
+AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar provider
+                          │
+                          └── GitHub: checks it's you signing in
 ```
 
-- **Sign-in.** GitHub is used only to identify the owner; no GitHub calendar or
-  repository permissions are requested. The allowed login is checked when the
-  OAuth token is issued and again before any tool is registered.
-- **Calendar access.** The Worker talks to your provider over CalDAV using a
-  username and password stored as Worker secrets. Use an app-specific password
-  if your provider offers one.
-- **Runtime.** Based on the official Cloudflare GitHub OAuth MCP starter, with a
-  stateless MCP SDK v2 handler (not the deprecated McpAgent transport). OAuth
-  state lives in one KV namespace; there are no AI or Durable Object bindings.
+- **Sign-in.** The Worker uses [OAuth](#oauth) with your GitHub account to
+  confirm it's you. It only reads your public GitHub profile (username, name and
+  email); it gets no access to your repositories. Your username is checked when you sign in and again on
+  every request.
+- **Calendar access.** The Worker logs in to your calendar provider with a
+  username and password stored as [secrets](#secret).
+- **Storage.** The only thing the Worker stores is sign-in records, kept in a
+  [KV namespace](#kv-namespace). It's built from Cloudflare's official
+  GitHub sign-in MCP starter.
 
 ### Tools
 
@@ -52,10 +53,10 @@ MCP client ──OAuth──▶ Cloudflare Worker ──CalDAV (username + passw
 | --- | --- |
 | `list_calendars` | List the calendars on the connected CalDAV account |
 | `list_events` | List events in one calendar over a date range (max 90 days) |
-| `get_event` | Read one full iCalendar resource |
-| `create_event` | Create a timed, nonrecurring event |
-| `update_event` | Change the title, times, location or description of a nonrecurring event |
-| `delete_event` | Delete an event resource (requires explicit confirmation) |
+| `get_event` | Read one event with all its details |
+| `create_event` | Create a one-off (non-repeating) event with a start and end time |
+| `update_event` | Change the title, times, location or description of a one-off event |
+| `delete_event` | Delete an event (requires explicit confirmation) |
 
 ### Safety rules and limits
 
@@ -83,12 +84,15 @@ These are enforced by the server itself, whatever the assistant asks for.
 
 ### Security notes
 
-- The CalDAV credentials usually grant broader access than these six tools
-  (often the whole account's calendars, and sometimes contacts).
-- No secrets are embedded in OAuth props, and the upstream GitHub access token
-  is not retained. Tool errors don't include exception details or credentials.
-- Request observability is disabled.
-- Cloudflare usage and account quotas determine any charges.
+- Your calendar password usually unlocks more than these six tools use: often
+  every calendar on the account, and sometimes contacts. That's why a dedicated
+  app-specific password is recommended; you can revoke it at any time without
+  changing your main password.
+- The Worker doesn't keep your GitHub sign-in token, and its error messages
+  never include passwords or internal details.
+- Cloudflare's request logging is turned off for the Worker, so your calendar
+  requests aren't logged there.
+- Any charges depend on your Cloudflare plan and usage.
 
 ### Social engineering and prompt injection
 
@@ -115,7 +119,7 @@ This takes about 20 minutes. You'll need:
 - Git and Node.js 22 or newer on your computer
 
 The big picture: you deploy the Worker first so you learn its address, register
-that address with GitHub so it can handle sign-in, store your credentials as
+that address with GitHub so it can handle sign-in, store your passwords as
 Cloudflare secrets, then point your AI assistant at it. Until the secrets are
 set, nobody can sign in or reach your calendar, so the early deploy is safe.
 
@@ -128,8 +132,8 @@ npm ci
 npx wrangler login
 ```
 
-`wrangler` is Cloudflare's command-line tool; `login` opens your browser to
-connect it to your Cloudflare account. On a machine without a browser, create
+[`wrangler`](#wrangler) is Cloudflare's command-line tool; `login` opens your
+browser to connect it to your Cloudflare account. On a machine without a browser, create
 a Cloudflare API token instead and set it as `CLOUDFLARE_API_TOKEN`.
 
 ### 2. Create your local config
@@ -141,14 +145,14 @@ copy that Git ignores, so they never end up in the repo:
 cp wrangler.jsonc wrangler.local.jsonc
 ```
 
-Create the storage the Worker uses for sign-in sessions (a KV namespace):
+Create the storage the Worker uses for sign-in records:
 
 ```sh
 npx wrangler kv namespace create OAUTH_KV -c wrangler.local.jsonc
 ```
 
-It prints a short config snippet containing an `id`. If it offers to add the
-binding to your config for you, say no; you'll add the id by hand.
+It prints a short config snippet containing an `id`. If it offers to update
+your config file for you, say no; you'll add the id by hand.
 
 Then edit `wrangler.local.jsonc`:
 
@@ -170,8 +174,8 @@ this file, since a fresh clone won't have it.
 npm run deploy
 ```
 
-The first time, wrangler may ask you to pick a `workers.dev` subdomain for
-your account. When it finishes, it prints your Worker's address near the end
+The first time, wrangler may ask you to choose a name for your account's
+`workers.dev` addresses (your subdomain). When it finishes, it prints your Worker's address near the end
 of the output. It looks like
 `https://<worker-name>.<your-subdomain>.workers.dev`, and you'll use it in the
 next steps.
@@ -181,8 +185,8 @@ next steps.
 This lets your Worker ask GitHub "who is signing in?". It gets no access to
 your repositories.
 
-In GitHub, go to your account's developer settings and create a new **OAuth
-App** (not a GitHub App) with:
+In GitHub, go to your account's developer settings and create a new
+[**OAuth App**](#oauth) (not a GitHub App) with:
 
 - **Homepage URL:** your Worker's address
 - **Authorization callback URL:** your Worker's address followed by `/callback`
@@ -236,15 +240,15 @@ Secrets take effect immediately; you don't need to deploy again.
 ### 6. Connect your AI assistant
 
 In your assistant's settings, look for the option to add a custom connector or
-remote MCP server. Enter your Worker's address followed by `/mcp`:
+remote [MCP](#mcp) server. Enter your Worker's address followed by `/mcp`:
 
 ```
 https://<worker-name>.<your-subdomain>.workers.dev/mcp
 ```
 
 If it asks for an authentication type, choose OAuth. When you connect, a page
-from your Worker asks you to approve the client, then GitHub asks you to sign
-in. Sign in as the account you set in `ALLOWED_GITHUB_LOGIN`.
+from your Worker asks you to approve the connection, then GitHub asks you to
+sign in. Sign in as the account you set in `ALLOWED_GITHUB_LOGIN`.
 
 Some assistants only offer custom connectors on certain plans or behind a
 developer setting; check your assistant's documentation if you don't see the
@@ -273,14 +277,14 @@ A few things to know before relying on it:
 | Symptom | Likely cause |
 | --- | --- |
 | "Not authorized" after signing in to GitHub, or "Forbidden" later | You signed in as a different account than `ALLOWED_GITHUB_LOGIN`, or that secret isn't set or was changed |
-| GitHub says the redirect URI isn't valid | The callback URL in the GitHub OAuth app doesn't exactly match your Worker's address plus `/callback` |
+| GitHub says the redirect URI isn't valid | The callback URL (GitHub also calls it the redirect URI) in the GitHub OAuth app doesn't exactly match your Worker's address plus `/callback` |
 | "CALDAV_URL must be set" | `CALDAV_URL` is empty or missing in `wrangler.local.jsonc`; fix it and deploy again |
 | "CalDAV operation failed" on every request | Wrong `CALDAV_USERNAME`, `CALDAV_PASSWORD` or `CALDAV_URL` (or it's still the `caldav.example.com` placeholder), or your provider requires an app-specific password |
 | `wrangler secret put` offers to create a new Worker | You changed `name` and left out `-c wrangler.local.jsonc`, so it's targeting the placeholder name |
 | `wrangler secret put` offers to create a new Worker, and you did use `-c` | You skipped the deploy in step 3, so the Worker doesn't exist yet |
 
 Sign-in errors appear in your browser; the `CALDAV_URL` and "CalDAV operation
-failed" errors appear in your assistant's tool results.
+failed" errors appear in your assistant's replies.
 
 To check the Worker is deployed and responding, without signing in, this
 should return `401 Unauthorized`:
@@ -299,6 +303,54 @@ npm run deploy
 
 If you change the code, run `npm run type-check && npm test` before deploying.
 See [VALIDATION.md](VALIDATION.md) for what has been tested so far.
+
+## Glossary
+
+### CalDAV
+
+The standard way calendar apps read and write calendars on a server. iCloud,
+Fastmail, Nextcloud and many others support it, which is why one Worker works
+with all of them.
+
+### MCP
+
+Model Context Protocol: the standard way AI assistants connect to outside
+tools. Your assistant sees this Worker as a set of calendar tools it can call.
+See [modelcontextprotocol.io](https://modelcontextprotocol.io).
+
+### Cloudflare Worker
+
+A small program that runs on Cloudflare's servers instead of your computer.
+It's always on and gets its own `https://` address.
+
+### wrangler
+
+Cloudflare's command-line tool for deploying Workers and managing their
+settings. `npm ci` installs it with the project, and you run it with
+`npx wrangler`.
+
+### OAuth
+
+The "sign in with…" system used across the web. Here it's used twice: your
+assistant signs in to your Worker, and your Worker asks GitHub to confirm who
+you are. An OAuth app is the registration on GitHub that allows this.
+
+### Secret
+
+A setting stored encrypted in Cloudflare, such as a password. The Worker can
+read it, but it never appears in your code or config files, and its value
+isn't shown again after you set it.
+
+### KV namespace
+
+A small key-value store in Cloudflare, like a simple database. The Worker uses
+one to keep track of sign-ins.
+
+### App-specific password
+
+A separate password your calendar provider generates for one app. It works
+instead of your main password, and you can revoke it on its own at any time.
+Most hosted providers require one for CalDAV.
 
 ## License
 
