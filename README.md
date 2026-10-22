@@ -112,8 +112,6 @@ fills in itself.
   include passwords or internal details.
 - Cloudflare request logging is off for the Worker.
 
-### Social engineering and prompt injection
-
 - **Prompt injection:** event text, including invitations from other people,
   goes to your assistant as-is and could contain instructions aimed at it.
   Invitations can't be edited or deleted; other changes rely on your assistant
