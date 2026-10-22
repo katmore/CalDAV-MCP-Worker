@@ -55,7 +55,7 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
 | `get_event` | Read one event with all its details |
 | `create_event` | Create a one-off (non-repeating) event with a start and end time |
 | `update_event` | Change the title, times, location or description of a one-off event |
-| `delete_event` | Delete an event (requires explicit confirmation) |
+| `delete_event` | Delete an event |
 
 ### Safety rules and limits
 
@@ -63,23 +63,23 @@ These are enforced by the server itself, whatever the assistant asks for.
 
 - **Only your real calendars.** Every request is checked against the calendars
   on your account at that moment, so the assistant can't act on a calendar or
-  event address it made up.
+  event that doesn't exist.
 - **No silent overwrites.** Before changing or deleting an event, the assistant
   must read it first. If the event changed in the meantime (say, you edited it
   on your phone), the change is refused instead of overwriting yours. Creating
   an event never replaces an existing one.
-- **What can't be edited:** repeating events, all-day events, invitations, and
-  events defined by a duration rather than an end time. When you edit other
-  events, details the server doesn't handle (such as alarms) are left
-  untouched.
+- **What can't be edited:** repeating events, all-day events and invitations.
+  Events defined by a duration rather than an end time can't have their times
+  changed. When you edit an event, details the server doesn't handle (such as
+  alarms) are left untouched.
 - **What can't be deleted:** invitations. Deleting a repeating event removes
-  the whole series and needs an extra confirmation; single occurrences can't be
-  changed or removed on their own.
-- **Repeating events may be incomplete.** When listing events, results that
-  might be missing some occurrences of a repeating event come back flagged
-  `capped: true`. Don't use those to decide whether you're free. Events saved without a timezone ("floating"
-  times) are also ambiguous. This isn't a full scheduling engine, so double-check
-  repeating events against your calendar app before relying on them.
+  the whole series, so the assistant has to confirm that explicitly; single
+  occurrences can't be changed or removed on their own.
+- **Repeating events may be incomplete.** Listings that might be missing
+  occurrences of a repeating event, or that include events saved without a
+  timezone, come back flagged `capped: true` so the assistant knows not to treat
+  them as a free/busy answer. Double-check repeating events against your
+  calendar app.
 
 ### Security notes
 
@@ -96,9 +96,8 @@ These are enforced by the server itself, whatever the assistant asks for.
 
 - **Prompt injection:** calendar text (titles, descriptions, locations, and
   invitations from other people) reaches the assistant as-is, and may contain
-  instructions aimed at it. Invitations can't be edited or deleted, and deletes
-  require explicit confirmation, but other writes rely on the assistant asking
-  you first.
+  instructions aimed at it. Invitations can't be edited or deleted; every other
+  write relies on the assistant asking you first.
 - **Approval phishing:** only your GitHub account can complete a sign-in, but
   anyone can start one. If someone sends you a link that connects *their* app
   to your Worker and you approve it and sign in, their app gets access to your
@@ -132,9 +131,7 @@ npx wrangler login
 ```
 
 [`wrangler`](#wrangler) is Cloudflare's command-line tool; `login` opens your
-browser to connect it to your Cloudflare account. On a machine without a
-browser, create a Cloudflare API token instead and set it as
-`CLOUDFLARE_API_TOKEN`.
+browser to connect it to your Cloudflare account.
 
 ### 2. Create your local config
 
@@ -209,9 +206,9 @@ Have these values ready:
 | `COOKIE_ENCRYPTION_KEY` | A random value (generate it below) |
 | `ALLOWED_GITHUB_LOGIN` | Your GitHub username. Only this account can use the server; if it's empty, nobody can |
 | `CALDAV_USERNAME` | Your calendar account's username, usually your email address (for iCloud, your Apple Account email) |
-| `CALDAV_PASSWORD` | A password for this connector. Use an app-specific password if your provider offers them (most hosted providers, including iCloud, Fastmail and Yahoo, require one) |
+| `CALDAV_PASSWORD` | The password the Worker will log in with. Use an app-specific password if your provider offers one |
 
-Generate the cookie key now so you can paste it in:
+Generate the `COOKIE_ENCRYPTION_KEY` value now so you can paste it in:
 
 ```sh
 openssl rand -hex 32
@@ -223,8 +220,8 @@ If you don't have `openssl` (for example on Windows), Node can do it:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Then run each command. It prompts for the value, so the value never appears in
-your shell history:
+Then run these. Each one prompts for its value, so nothing lands in your shell
+history:
 
 ```sh
 npx wrangler secret put GITHUB_CLIENT_ID -c wrangler.local.jsonc
