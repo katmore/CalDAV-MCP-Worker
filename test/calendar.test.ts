@@ -12,28 +12,35 @@ const ics=(...lines:string[])=>['BEGIN:VCALENDAR','VERSION:2.0',...lines,'END:VC
 const vevent=(...lines:string[])=>['BEGIN:VEVENT',...lines,'END:VEVENT'].join('\r\n');
 const timed=(uid:string,start:string,end:string,...extra:string[])=>vevent(`UID:${uid}`,`DTSTART:${start}`,`DTEND:${end}`,'SUMMARY:Test',...extra);
 
+type Options={calendars?:{url:string;displayName?:string}[];keepCreated?:boolean};
+
 // A stand-in for tsdav's client that serves fixed objects and records writes.
-function fakeDAV(objects:Obj[]) {
+function fakeDAV(objects:Obj[],{calendars=[{url:CAL,displayName:'Home'}],keepCreated=true}:Options={}) {
  const writes:string[]=[];
+ const created:any[]=[];
  const client={
-  fetchCalendars:async()=>[{url:CAL,displayName:'Home'}],
+  fetchCalendars:async()=>calendars,
   fetchCalendarObjects:async({objectUrls}:{objectUrls?:string[]})=>objectUrls?objects.filter(o=>objectUrls.includes(o.url)):objects,
-  createCalendarObject:async()=>{writes.push('create');return new Response(null,{status:201});},
+  createCalendarObject:async(args:any)=>{
+   writes.push('create'); created.push(args);
+   if (keepCreated) objects.push({url:args.calendar.url+args.filename,etag:'"new"',data:args.iCalString});
+   return new Response(null,{status:201});
+  },
   updateCalendarObject:async()=>{writes.push('update');return new Response(null,{status:204});},
   deleteCalendarObject:async()=>{writes.push('delete');return new Response(null,{status:204});},
  };
- return {connect:(async()=>client) as any,writes};
+ return {connect:(async()=>client) as any,writes,created};
 }
 
 // Builds the server with tool registration captured, so handlers can be called directly.
-async function tools(objects:Obj[]=[],env:Record<string,string>=ENV,props=OWNER) {
- const dav=fakeDAV(objects);
+async function tools(objects:Obj[]=[],env:Record<string,string>=ENV,props=OWNER,options:Options={}) {
+ const dav=fakeDAV(objects,options);
  const calendar=new CalendarServer(env as any,props,dav.connect);
  const handlers:Record<string,(args:any)=>Promise<any>>={};
  (calendar.server as any).registerTool=(name:string,_config:unknown,handler:(args:any)=>Promise<any>)=>{handlers[name]=handler;};
  await calendar.init();
  const call=async(name:string,args:any)=>{const r=await handlers[name](args);return {isError:!!r.isError,body:JSON.parse(r.content[0].text)};};
- return {handlers,call,writes:dav.writes};
+ return {handlers,call,writes:dav.writes,created:dav.created};
 }
 
 test('owner check is case-insensitive and denies when unset or empty',()=> {
@@ -140,4 +147,71 @@ test('tools refuse events outside the discovered calendar',async()=> {
  assert.equal((await call('get_event',{calendarId:CAL,resourceId:'https://calendar.example.test/1/calendars/work/x.ics'})).isError,true);
  assert.equal((await call('list_events',{...RANGE,calendarId:'https://calendar.example.test/1/calendars/work/'})).isError,true);
  assert.deepEqual(writes,[]);
+});
+
+test('list_calendars returns each calendar with a name',async()=> {
+ const other='https://calendar.example.test/1/calendars/other/';
+ const {call}=await tools([],ENV,OWNER,{calendars:[{url:CAL,displayName:'Home'},{url:other}]});
+ assert.deepEqual((await call('list_calendars',{})).body,[{id:CAL,name:'Home'},{id:other,name:'(untitled)'}]);
+});
+
+test('get_event returns the event details and raw calendar data',async()=> {
+ const data=ics(timed('p','20300103T100000Z','20300103T110000Z','LOCATION:Office'));
+ const {call}=await tools([{url:CAL+'plain.ics',etag:'"1"',data}]);
+ const r=await call('get_event',{calendarId:CAL,resourceId:CAL+'plain.ics'});
+ assert.equal(r.isError,false);
+ assert.equal(r.body.etag,'"1"');
+ assert.equal(r.body.events[0].title,'Test');
+ assert.equal(r.body.events[0].location,'Office');
+ assert.equal(r.body.ical,data);
+});
+
+test('list_events rejects backwards and overlong ranges',async()=> {
+ const {call}=await tools();
+ assert.equal((await call('list_events',{...RANGE,start:RANGE.end,end:RANGE.start})).isError,true);
+ assert.equal((await call('list_events',{...RANGE,end:'2030-06-01T00:00:00Z'})).isError,true);
+});
+
+test('list_events flags results when a series hits the iteration limit',async()=> {
+ const {call}=await tools([{url:CAL+'hourly.ics',etag:'"1"',data:ics(timed('h','20270101T000000Z','20270101T003000Z','RRULE:FREQ=HOURLY'))}]);
+ const r=await call('list_events',RANGE);
+ assert.equal(r.body.capped,true);
+ assert.equal(r.body.occurrences.length,0);
+});
+
+const NEW={calendarId:CAL,title:'Connector test',start:'2030-01-03T10:00:00Z',end:'2030-01-03T10:30:00Z',location:'Office',description:'Notes'};
+
+test('create_event saves a new event without overwriting and reads it back',async()=> {
+ const {call,writes,created}=await tools();
+ const r=await call('create_event',NEW);
+ assert.equal(r.isError,false);
+ assert.equal(r.body.created,true);
+ assert.equal(r.body.verification,'verified');
+ assert.equal(r.body.events[0].title,'Connector test');
+ assert.deepEqual(writes,['create']);
+ assert.equal(created[0].headers['If-None-Match'],'*');
+ assert.match(created[0].iCalString,/LOCATION:Office/);
+});
+
+test('create_event reports success as pending when read-back fails',async()=> {
+ const {call}=await tools([],ENV,OWNER,{keepCreated:false});
+ const r=await call('create_event',NEW);
+ assert.equal(r.isError,false);
+ assert.equal(r.body.verification,'pending');
+});
+
+test('create_event rejects an end before the start without writing',async()=> {
+ const {call,writes}=await tools();
+ assert.equal((await call('create_event',{...NEW,end:NEW.start})).isError,true);
+ assert.deepEqual(writes,[]);
+});
+
+test('update_event changes times, location and description, and rejects an end before the start',async()=> {
+ const {call,writes}=await tools([{url:CAL+'plain.ics',etag:'"1"',data:ics(timed('p','20300101T100000Z','20300101T110000Z'))}]);
+ const base={calendarId:CAL,resourceId:CAL+'plain.ics',etag:'"1"'};
+ assert.equal((await call('update_event',{...base,end:'2030-01-01T09:00:00Z'})).isError,true);
+ assert.deepEqual(writes,[]);
+ const r=await call('update_event',{...base,start:'2030-01-01T12:00:00Z',end:'2030-01-01T13:00:00Z',location:'Office',description:'Notes'});
+ assert.equal(r.isError,false);
+ assert.deepEqual(writes,['update']);
 });
