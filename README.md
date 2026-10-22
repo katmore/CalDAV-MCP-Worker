@@ -109,19 +109,28 @@ These risks come from people and content rather than from flaws in the code.
   calendar. Only approve the connection page right after you've started
   connecting your own assistant.
 
-## How to set it up
+## Setup
 
-This takes about 20 minutes. You'll need:
+Setup takes about 20 minutes. The Worker is deployed first so you learn its
+address, then that address is registered with GitHub for sign-in, your
+passwords are stored as Cloudflare secrets, and finally your AI assistant is
+pointed at it. Until the secrets are set, nobody can sign in or reach your
+calendar, so the early deploy is safe.
+
+### Prerequisites
+
+This guide assumes you're comfortable running commands in a terminal, cloning
+a Git repository and editing a config file. No prior experience with
+Cloudflare, OAuth or MCP is needed; the [glossary](#glossary) covers the terms
+that come up.
+
+You'll need:
 
 - A Cloudflare account (the free plan is enough for personal use)
 - A GitHub account, used only to sign in to your server
 - A calendar account that supports CalDAV (see [Supported calendars](#supported-calendars))
-- Git and Node.js 22 or newer on your computer
-
-The big picture: you deploy the Worker first so you learn its address, register
-that address with GitHub so it can handle sign-in, store your passwords as
-Cloudflare secrets, then point your AI assistant at it. Until the secrets are
-set, nobody can sign in or reach your calendar, so the early deploy is safe.
+- Git and Node.js 22 or newer installed on your computer
+- An AI assistant that can connect to remote MCP servers
 
 ### 1. Get the code
 
