@@ -259,16 +259,53 @@ option.
 
 ### 7. Try it
 
-Ask your assistant to list your calendars, then to show this week's events.
-Compare the answer with your usual calendar app.
+Paste these into your assistant in order, and again after each deploy. Stop at
+the first failure, compare each answer with your calendar app, and use a
+calendar you don't mind testing in.
 
-To test changes safely, ask it to create a test event, rename it, and delete
-it, checking your calendar app after each step. Use a calendar you don't mind
-experimenting in.
+1. List your calendars. They should match your calendar app.
 
-If a request times out while creating an event, have the assistant check
-whether it was created before trying again, to avoid duplicates. See
-[Safety rules and limits](#safety-rules-and-limits) for what it can't do.
+   ```
+   Using the calendar connector, list all of my calendars.
+   ```
+
+2. Read this week. Check the times, especially repeating events. A `capped`
+   result is normal when a repeating event runs past the end of the week.
+
+   ```
+   Show me the events on my <calendar name> calendar for this week.
+   ```
+
+3. Create a test event. If the request times out, have the assistant list that
+   day's events before trying again, to avoid a duplicate.
+
+   ```
+   Create an event called "Connector test" on my <calendar name> calendar, <day> from <start time> to <end time>. Then read it back and show me what was saved.
+   ```
+
+4. Change it. If this fails, the event may have changed since it was read; ask
+   the assistant to read it again and retry.
+
+   ```
+   Rename the "Connector test" event to "Connector test (edited)" and move it 30 minutes later. Then read it back.
+   ```
+
+5. Delete it. Nothing else on that day should change.
+
+   ```
+   Delete the "Connector test (edited)" event, then list that day's events to confirm it's gone.
+   ```
+
+6. Optionally, check the safety rules. Both should fail and leave your calendar
+   unchanged (see [Safety rules and limits](#safety-rules-and-limits)).
+
+   ```
+   Change the title of my repeating <event name> event.
+   ```
+
+   ```
+   Change the time of the <event name> invitation.
+   ```
 
 ### Troubleshooting
 

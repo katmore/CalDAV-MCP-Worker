@@ -113,7 +113,8 @@ The updated event kept its UID and address, a fresh version was used for the
 update and the deletion, and no other events were changed.
 
 This check predates the timezone and sign-in fixes above. After deploying a
-new version, repeat it with the prompts in `AGENT-TEST-PROMPTS.md`.
+new version, repeat it with the prompts in the README's
+[Try it](README.md#7-try-it) step.
 
 ## Remaining limits
 
