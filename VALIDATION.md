@@ -118,6 +118,12 @@ then creates, reads, edits, lists and deletes a test event, cleaning up even
 if a step fails. Its logic was tested against a local stand-in Worker,
 including a failure partway through.
 
+Against the deployed Worker with the https and trusted-host rules in place
+(`CALDAV_TRUSTED_HOSTS` set to `.icloud.com`), `npm run smoke` passed every step
+on a real iCloud calendar: listing calendars, creating, reading, editing and
+listing a test event, deleting it and confirming it was gone. This confirms
+iCloud's handoff to its regional servers stays within `.icloud.com`.
+
 Separately from the automated tests, the Worker was deployed and used through
 an MCP client against a real iCloud calendar. All of these passed without
 errors or retries:
@@ -134,8 +140,8 @@ errors or retries:
 The updated event kept its UID and address, a fresh version was used for the
 update and the deletion, and no other events were changed.
 
-This check predates the timezone, sign-in and https fixes above, and the https
-fix changes how the Worker reaches iCloud. After deploying a
+This assistant check predates the timezone, sign-in and https fixes above; the
+smoke test above covers the same steps on the current version. After deploying a
 new version, repeat it with the prompts in the README's
 [Try it](README.md#7-try-it) step.
 
