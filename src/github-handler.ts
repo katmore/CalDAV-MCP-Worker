@@ -5,7 +5,6 @@ import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, type Props } from "./u
 import { isAllowedLogin } from "./safety";
 import {
 	addApprovedClient,
-	bindStateToSession,
 	createOAuthState,
 	generateCSRFProtection,
 	isClientApproved,
@@ -26,10 +25,9 @@ app.get("/authorize", async (c) => {
 
 	// Check if client is already approved
 	if (await isClientApproved(c.req.raw, clientId, env.COOKIE_ENCRYPTION_KEY)) {
-		// Skip approval dialog but still create secure state and bind to session
-		const { stateToken } = await createOAuthState(oauthReqInfo, c.env.OAUTH_KV);
-		const { setCookie: sessionBindingCookie } = await bindStateToSession(stateToken);
-		return redirectToGithub(c.req.raw, stateToken, { "Set-Cookie": sessionBindingCookie });
+		// Skip approval dialog but still create secure state bound to this browser
+		const { stateToken, setCookie: stateCookie } = await createOAuthState(oauthReqInfo, env.COOKIE_ENCRYPTION_KEY);
+		return redirectToGithub(c.req.raw, stateToken, { "Set-Cookie": stateCookie });
 	}
 
 	// Generate CSRF protection for the approval form
@@ -80,14 +78,13 @@ app.post("/authorize", async (c) => {
 			c.env.COOKIE_ENCRYPTION_KEY,
 		);
 
-		// Create OAuth state and bind it to this user's session
-		const { stateToken } = await createOAuthState(state.oauthReqInfo, c.env.OAUTH_KV);
-		const { setCookie: sessionBindingCookie } = await bindStateToSession(stateToken);
+		// Create OAuth state bound to this browser
+		const { stateToken, setCookie: stateCookie } = await createOAuthState(state.oauthReqInfo, c.env.COOKIE_ENCRYPTION_KEY);
 
-		// Set both cookies: approved client list + session binding
+		// Set both cookies: approved client list + signed state
 		const headers = new Headers();
 		headers.append("Set-Cookie", approvedClientCookie);
-		headers.append("Set-Cookie", sessionBindingCookie);
+		headers.append("Set-Cookie", stateCookie);
 
 		return redirectToGithub(c.req.raw, stateToken, headers);
 	} catch (error: any) {
@@ -124,21 +121,19 @@ async function redirectToGithub(
  * down to the client. It ends by redirecting the client back to _its_ callback URL
  *
  * SECURITY: This endpoint validates that the state parameter from GitHub
- * matches both:
- * 1. A valid state token in KV (proves it was created by our server)
- * 2. The __Host-CONSENTED_STATE cookie (proves THIS browser consented to it)
+ * matches the signed __Host-OAUTH_STATE cookie, which proves our server
+ * created the state and that THIS browser consented to it.
  *
  * This prevents CSRF attacks where an attacker's state token is injected
  * into a victim's OAuth flow.
  */
 app.get("/callback", async (c) => {
-	// Validate OAuth state with session binding
-	// This checks both KV storage AND the session cookie
+	// Validate OAuth state against the signed state cookie
 	let oauthReqInfo: AuthRequest;
 	let clearSessionCookie: string;
 
 	try {
-		const result = await validateOAuthState(c.req.raw, c.env.OAUTH_KV);
+		const result = await validateOAuthState(c.req.raw, c.env.COOKIE_ENCRYPTION_KEY);
 		oauthReqInfo = result.oauthReqInfo;
 		clearSessionCookie = result.clearCookie;
 	} catch (error: any) {

@@ -4,7 +4,6 @@ import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl } from '../src/utils';
 import {
   OAuthError,
   addApprovedClient,
-  bindStateToSession,
   createOAuthState,
   generateCSRFProtection,
   isClientApproved,
@@ -16,9 +15,6 @@ import {
 } from '../src/workers-oauth-utils';
 
 const SECRET = 'test-secret';
-const sha256 = async (text: string) =>
-  Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))))
-    .map(b => b.toString(16).padStart(2, '0')).join('');
 const withCookie = (cookie?: string, url = 'https://worker.example.test/callback') =>
   new Request(url, cookie === undefined ? {} : { headers: { Cookie: cookie } });
 const form = (fields: Record<string, string | Blob>) => {
@@ -93,58 +89,81 @@ describe('CSRF protection', () => {
 });
 
 describe('OAuth state', () => {
-  test('stores the request under a random token that expires', async () => {
-    const { stateToken } = await createOAuthState(reqInfo, env.OAUTH_KV);
-    expect(JSON.parse((await env.OAUTH_KV.get(`oauth:state:${stateToken}`))!)).toEqual(reqInfo);
-    const listed = await env.OAUTH_KV.list({ prefix: `oauth:state:${stateToken}` });
-    const secondsLeft = listed.keys[0].expiration! - Date.now() / 1000;
+  const COOKIE = '__Host-OAUTH_STATE';
+  const cookieValue = (setCookie: string) => setCookie.split(';')[0];
+  const decode = (setCookie: string) => {
+    const [, encoded] = cookieValue(setCookie).slice(COOKIE.length + 1).split('.');
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded), ch => ch.charCodeAt(0))));
+  };
+  const keys = async () => (await env.OAUTH_KV.list()).keys.map(k => k.name).sort();
+
+  const callback = async (state: string | null, cookie?: string, secret = SECRET) => {
+    const url = new URL('https://worker.example.test/callback');
+    if (state) url.searchParams.set('state', state);
+    return await validateOAuthState(withCookie(cookie, url.href), secret);
+  };
+
+  test('keeps the request in a signed, locked-down cookie that expires, writing nothing to storage', async () => {
+    const before = await keys();
+    const { stateToken, setCookie } = await createOAuthState(reqInfo, SECRET);
+    expect(await keys()).toEqual(before);
+    expect(setCookie).toMatch(new RegExp(`^${COOKIE}=[0-9a-f]{64}\\.[A-Za-z0-9+/=]+; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600$`));
+    const payload = decode(setCookie);
+    expect(payload.stateToken).toBe(stateToken);
+    expect(payload.oauthReqInfo).toEqual(reqInfo);
+    const secondsLeft = payload.expiresAt - Date.now() / 1000;
     expect(secondsLeft).toBeGreaterThan(0);
     expect(secondsLeft).toBeLessThanOrEqual(600);
   });
 
-  test('binds the state to the browser with a hash, not the token itself', async () => {
-    const { setCookie } = await bindStateToSession('token-1');
-    expect(setCookie).toBe(`__Host-CONSENTED_STATE=${await sha256('token-1')}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`);
-    expect(setCookie).not.toContain('token-1');
-  });
-
-  const callback = async (state: string | null, cookie?: string) => {
-    const url = new URL('https://worker.example.test/callback');
-    if (state) url.searchParams.set('state', state);
-    return await validateOAuthState(withCookie(cookie, url.href), env.OAUTH_KV);
-  };
-
-  test('accepts state from this browser once, then forgets it', async () => {
-    const { stateToken } = await createOAuthState(reqInfo, env.OAUTH_KV);
-    const cookie = `__Host-CONSENTED_STATE=${await sha256(stateToken)}`;
-    const result = await callback(stateToken, cookie);
+  test('accepts the state from the browser that started the sign-in, and clears the cookie', async () => {
+    const { stateToken, setCookie } = await createOAuthState(reqInfo, SECRET);
+    const result = await callback(stateToken, `other=1; ${cookieValue(setCookie)}`);
     expect(result.oauthReqInfo).toEqual(reqInfo);
-    expect(result.clearCookie).toContain('Max-Age=0');
-    await expect(callback(stateToken, cookie)).rejects.toThrow('Invalid or expired state');
+    expect(result.clearCookie).toBe(`${COOKIE}=; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=0`);
   });
 
-  test('rejects a missing or unknown state', async () => {
+  test('keeps non-ASCII request details intact', async () => {
+    const unusual = { ...reqInfo, state: 'café ☕' };
+    const { stateToken, setCookie } = await createOAuthState(unusual, SECRET);
+    expect((await callback(stateToken, cookieValue(setCookie))).oauthReqInfo).toEqual(unusual);
+  });
+
+  test('rejects a callback without a state token', async () => {
     await expect(callback(null)).rejects.toThrow('Missing state parameter');
-    await expect(callback('never-issued')).rejects.toThrow('Invalid or expired state');
   });
 
-  test('rejects state when the browser never consented to it', async () => {
-    const { stateToken } = await createOAuthState(reqInfo, env.OAUTH_KV);
+  test('rejects state when the browser never started a sign-in', async () => {
+    const { stateToken } = await createOAuthState(reqInfo, SECRET);
     await expect(callback(stateToken)).rejects.toThrow('Missing session binding cookie');
     await expect(callback(stateToken, 'other=1')).rejects.toThrow('Missing session binding cookie');
   });
 
-  test("rejects state that belongs to someone else's session", async () => {
-    const { stateToken } = await createOAuthState(reqInfo, env.OAUTH_KV);
-    await expect(callback(stateToken, `__Host-CONSENTED_STATE=${await sha256('attacker')}`)).rejects.toThrow('does not match session');
+  test("rejects a state token that belongs to someone else's sign-in", async () => {
+    const mine = await createOAuthState(reqInfo, SECRET);
+    const theirs = await createOAuthState(reqInfo, SECRET);
+    await expect(callback(theirs.stateToken, cookieValue(mine.setCookie))).rejects.toThrow('does not match session');
   });
 
-  test('reports corrupted stored state as a server error', async () => {
-    await env.OAUTH_KV.put('oauth:state:broken', '{not json');
-    const error = await callback('broken', `__Host-CONSENTED_STATE=${await sha256('broken')}`).catch(e => e);
-    expect(error).toBeInstanceOf(OAuthError);
-    expect(error.code).toBe('server_error');
-    expect(error.statusCode).toBe(500);
+  test('rejects a cookie that was forged, edited or signed with another key', async () => {
+    const { stateToken, setCookie } = await createOAuthState(reqInfo, SECRET);
+    const [signature, encoded] = cookieValue(setCookie).slice(COOKIE.length + 1).split('.');
+    const payload = decode(setCookie);
+    const edited = btoa(JSON.stringify({ ...payload, oauthReqInfo: { ...reqInfo, redirectUri: 'https://attacker.example.test/' } }));
+    for (const value of [`${signature}.${edited}`, `${'0'.repeat(64)}.${encoded}`, `${signature}`, `${signature}.${encoded}.x`, `${signature}.%%%`]) {
+      await expect(callback(stateToken, `${COOKIE}=${value}`), value.slice(0, 20)).rejects.toThrow('Invalid or expired state');
+    }
+    await expect(callback(stateToken, cookieValue(setCookie), 'other-secret')).rejects.toThrow('Invalid or expired state');
+  });
+
+  test('rejects a sign-in that took too long', async () => {
+    const { stateToken, setCookie } = await createOAuthState(reqInfo, SECRET, 600);
+    vi.useFakeTimers({ now: Date.now() + 601_000 });
+    try {
+      await expect(callback(stateToken, cookieValue(setCookie))).rejects.toThrow('Invalid or expired state');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

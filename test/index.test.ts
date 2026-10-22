@@ -74,7 +74,7 @@ async function signIn({ login = 'owner', tamperState, keepBinding = true, client
   const state = new URL(approved.headers.get('Location')!).searchParams.get('state')!;
 
   const approvedCookies = cookieValues(approved);
-  const bindingOnly = approvedCookies.filter(c => c.startsWith('__Host-CONSENTED_STATE='));
+  const bindingOnly = approvedCookies.filter(c => c.startsWith('__Host-OAUTH_STATE='));
   const callback = await call(new Request(`${BASE}/callback?code=gh-code&state=${state}`, { headers: keepBinding ? { Cookie: bindingOnly.join('; ') } : {} }));
   const result = { callback, approvedCookies, authorizeUrl };
   if (callback.status !== 302) { vi.restoreAllMocks(); return result; }
@@ -164,6 +164,30 @@ describe('Worker entry point', () => {
       expect(await clientKeys()).toEqual(before);
       const response = await call(rpc(accessToken, 'tools/list'));
       expect((await rpcResult(response)).result.tools).toHaveLength(6);
+    });
+
+    test('let a stranger go all the way to the GitHub step without writing anything', async () => {
+      network({ clientDoc: doc });
+      const keys = async () => (await env.OAUTH_KV.list()).keys.map(k => k.name).sort();
+      const before = await keys();
+      const url = new URL(`${BASE}/authorize`);
+      for (const [k, v] of Object.entries({ response_type: 'code', client_id: CLIENT_DOC, redirect_uri: CLIENT_CB, code_challenge: 'x'.repeat(43), code_challenge_method: 'S256' })) url.searchParams.set(k, v);
+      const page = await call(new Request(url));
+      const html = await page.text();
+      const field = (name: string) => html.match(new RegExp(`name="${name}" value="([^"]+)"`))![1];
+      const approved = await call(new Request(`${BASE}/authorize`, {
+        method: 'POST',
+        headers: { Cookie: cookieValues(page).join('; ') },
+        body: new URLSearchParams({ state: field('state'), csrf_token: field('csrf_token') }),
+      }));
+      expect(approved.headers.get('Location')).toMatch(/^https:\/\/github\.com\/login\/oauth\/authorize\?/);
+      expect(await keys()).toEqual(before);
+    });
+
+    test('advertise what Claude needs to choose them: public clients and S256', async () => {
+      const metadata = await (await call(new Request(`${BASE}/.well-known/oauth-authorization-server`))).json() as any;
+      expect(metadata.token_endpoint_auth_methods_supported).toContain('none');
+      expect(metadata.code_challenge_methods_supported).toEqual(['S256']);
     });
 
     test('show the name from the document on the approval page', async () => {
