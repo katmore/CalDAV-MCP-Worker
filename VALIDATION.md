@@ -32,7 +32,7 @@ replaced by fakes, and every secret has a test-only value in
 | --- | --- |
 | `test/safety.test.ts` | The owner check; the calendar boundary, one test per rule (other hosts, ports, `http`, credentials, query strings, fragments, `..` and encoded slashes, nested folders, non-`.ics` files, look-alike sibling folders); refused saves never counting as success; what counts as a repeating event; timezones staying inside the event that defines them |
 | `test/calendar.test.ts` | All six calendar tools against a fake calendar server: what is written and where, the version sent with each change, refused saves, edits keeping alarms and unknown fields, the refusal rules for repeating events, all-day events and invitations, the `capped` flag, the 90-day, 250-event and 500-occurrence limits, input validation (including that deletes need `confirm: "DELETE"`), the read-only and destructive markers on each tool, and error messages that hide internal details |
-| `test/oauth-utils.test.ts` | Sign-in building blocks: CSRF tokens, one-time sign-in state tied to the browser that started it, the signed "approved apps" cookie (including forged and foreign cookies), HTML escaping and link filtering on the approval page, and the GitHub token exchange |
+| `test/oauth-utils.test.ts` | Sign-in building blocks: CSRF tokens, sign-in state kept in a signed, expiring cookie tied to the browser that started it (forged, edited, expired and mismatched cookies are refused, and nothing is written to KV), the signed "approved apps" cookie (including forged and foreign cookies), HTML escaping and link filtering on the approval page, and the GitHub token exchange |
 | `test/github-handler.test.ts` | The sign-in pages: approval, the GitHub callback, refusing any GitHub account but the owner, failed GitHub responses, replayed or cross-browser callbacks, and hidden internal errors |
 | `test/transport.test.ts` | The CalDAV network boundary, using the real CalDAV client against a fake network: `CALDAV_URL` must be https; discovery, server-listed addresses and every redirect step stay on https and on trusted hosts; the network is never left to follow redirects unchecked; refusals are reported without addresses or credentials; create, update and delete still send their version checks |
 | `test/index.test.ts` | The whole sign-in end to end, as an MCP client does it: register (or identify with a client metadata document, which leaves nothing stored), approve, sign in through a fake GitHub, exchange the code with PKCE, then list the calendar tools. Metadata documents with an unlisted return address, a mismatched `client_id` or that can't be fetched are refused. Also: tokens that are missing, made up or belong to an account no longer allowed; a tampered redirect address; remembered approvals |
@@ -51,7 +51,7 @@ replaced by fakes, and every secret has a test-only value in
 ### Checking the tests themselves
 
 Full coverage only shows that code ran. To check the tests would notice a
-safety rule breaking, each rule was broken on purpose and a test had to fail. Each of these 23 breakages was caught:
+safety rule breaking, each rule was broken on purpose and a test had to fail. Each of these breakages was caught:
 
 - saves refused by the server reported as success (create, update, delete)
 - calendar boundary rules removed (fragments, non-`.ics` files, credentials, backslashes)
@@ -64,7 +64,10 @@ safety rule breaking, each rule was broken on purpose and a test had to fail. Ea
 - one event's timezone affecting others
 - the owner check skipped at sign-in or on each request
 - GitHub asked who signed in without the token
-- sign-in state reusable, the CSRF check skipped, or the browser check skipped
+- the sign-in state cookie accepted without its signature, after it expired,
+  without matching the state token, or when missing; or not cleared afterwards
+- the approval step writing to KV again
+- the CSRF check skipped
 - the weaker "plain" PKCE allowed
 
 ### Bugs the tests found

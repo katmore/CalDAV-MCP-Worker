@@ -56,10 +56,11 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
 - **Connecting apps.** An app identifies itself either with a public metadata
   document (its name and return address at a web address it controls), which
   the current MCP spec prefers, or by registering with the Worker. Both work.
-- **Storage.** The Worker keeps app registrations and the tokens it issues to
+- **Storage.** After you sign in, the Worker keeps the tokens it issues to
   your assistant in a [KV namespace](#kv-namespace), so the assistant stays
-  signed in. Apps that use a metadata document aren't stored. No calendar data
-  is stored.
+  signed in. Apps that register are stored there too; apps that use a metadata
+  document aren't. A sign-in in progress is kept in a signed browser cookie,
+  not in KV. No calendar data is stored.
 
 ### Tools
 
