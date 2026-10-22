@@ -1,4 +1,9 @@
 import ICAL from 'ical.js';
+// The single owner check used at sign-in, on every request and before tools are registered.
+// An unset or empty allowlist denies everyone.
+export function isAllowedLogin(login: string | undefined, allowed: string | undefined) {
+  return !!login && !!allowed && login.toLowerCase() === allowed.toLowerCase();
+}
 export function assertResource(calendar: string, resource: string) {
   const c = new URL(calendar), r = new URL(resource);
   const prefix = c.pathname.endsWith('/') ? c.pathname : c.pathname + '/';
