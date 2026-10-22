@@ -42,7 +42,7 @@
  	request: Request,
  	stateToken: string,
 -	headers: Record<string, string> = {},
-+	headers: HeadersInit = {},
++	headers: HeadersInit,
  ) {
 -	return new Response(null, {
 -		headers: {
@@ -86,3 +86,14 @@
  			email,
  			login,
  			name,
+@@ -191,9 +189,7 @@
+ 
+ 	// Clear the session binding cookie (one-time use) by creating response with headers
+ 	const headers = new Headers({ Location: redirectTo });
+-	if (clearSessionCookie) {
+-		headers.set("Set-Cookie", clearSessionCookie);
+-	}
++	headers.set("Set-Cookie", clearSessionCookie);
+ 
+ 	return new Response(null, {
+ 		status: 302,

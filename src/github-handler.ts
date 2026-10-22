@@ -104,7 +104,7 @@ app.post("/authorize", async (c) => {
 async function redirectToGithub(
 	request: Request,
 	stateToken: string,
-	headers: HeadersInit = {},
+	headers: HeadersInit,
 ) {
 	const responseHeaders = new Headers(headers);
  responseHeaders.set('Location', getUpstreamAuthorizeUrl({
@@ -189,9 +189,7 @@ app.get("/callback", async (c) => {
 
 	// Clear the session binding cookie (one-time use) by creating response with headers
 	const headers = new Headers({ Location: redirectTo });
-	if (clearSessionCookie) {
-		headers.set("Set-Cookie", clearSessionCookie);
-	}
+	headers.set("Set-Cookie", clearSessionCookie);
 
 	return new Response(null, {
 		status: 302,

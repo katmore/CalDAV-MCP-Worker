@@ -1,0 +1,11 @@
+--- a/workers-oauth-utils.ts
++++ b/workers-oauth-utils.ts
+@@ -678,7 +678,7 @@
+ 
+           <div class="card">
+ 
+-            <h2 class="alert"><strong>${clientName || "A new MCP Client"}</strong> is requesting access</h1>
++            <h2 class="alert"><strong>${clientName}</strong> is requesting access</h1>
+ 
+             <div class="client-info">
+               <div class="client-detail">
