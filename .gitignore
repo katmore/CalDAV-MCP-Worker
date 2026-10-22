@@ -2,6 +2,7 @@
 node_modules/
 dist/
 coverage/
+/reports/
 *.tsbuildinfo
 
 # Local Worker state and generated types
