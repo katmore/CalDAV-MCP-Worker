@@ -83,6 +83,21 @@ MCP client ──OAuth──▶ Cloudflare Worker ──CalDAV (username + passw
 - Request observability is disabled.
 - Cloudflare usage and account quotas determine any charges.
 
+### Social engineering and prompt injection
+
+These risks come from people and content rather than from flaws in the code.
+
+- **Prompt injection:** calendar text (titles, descriptions, locations, and
+  invitations from other people) reaches the assistant as-is, and may contain
+  instructions aimed at it. Invitations can't be edited or deleted, and deletes
+  require explicit confirmation, but other writes rely on the assistant asking
+  you first.
+- **Approval phishing:** only your GitHub account can complete a sign-in, but
+  anyone can start one. If someone sends you a link that connects *their* app
+  to your Worker and you approve it and sign in, their app gets access to your
+  calendar. Only approve the connection page right after you've started
+  connecting your own assistant.
+
 ## How to set it up
 
 This takes about 20 minutes. You'll need:
