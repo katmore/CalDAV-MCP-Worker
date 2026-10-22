@@ -56,9 +56,7 @@ those closely; they're the hardest part to get right.
 ## 3. Create a test event
 
 ```
-Create an event called "Connector test" on my <calendar name> calendar,
-<day> from <start time> to <end time>. Then read it back and show me what
-was saved.
+Create an event called "Connector test" on my <calendar name> calendar, <day> from <start time> to <end time>. Then read it back and show me what was saved.
 ```
 
 **What it checks:** creating events, and that the server saved what was
@@ -75,8 +73,7 @@ duplicate.
 ## 4. Change the test event
 
 ```
-Rename the "Connector test" event to "Connector test (edited)" and move it
-30 minutes later. Then read it back.
+Rename the "Connector test" event to "Connector test (edited)" and move it 30 minutes later. Then read it back.
 ```
 
 **What it checks:** updating an event. The assistant has to read the event
@@ -93,8 +90,7 @@ working. Ask it to read the event again and retry.
 ## 5. Delete the test event
 
 ```
-Delete the "Connector test (edited)" event, then list that day's events to
-confirm it's gone.
+Delete the "Connector test (edited)" event, then list that day's events to confirm it's gone.
 ```
 
 **What it checks:** deleting an event, and that nothing else was touched.
