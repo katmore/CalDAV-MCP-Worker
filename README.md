@@ -80,13 +80,20 @@ These are enforced by the server itself, whatever the assistant asks for.
   changed. When you edit an event, details the server doesn't handle (such as
   alarms) are left untouched.
 - **What can't be deleted:** invitations. Deleting a repeating event removes
-  the whole series, so the assistant has to confirm that explicitly; single
-  occurrences can't be changed or removed on their own.
+  the whole series, so the assistant has to ask for whole-series deletion
+  explicitly; single occurrences can't be changed or removed on their own.
 - **Repeating events may be incomplete.** Listings that might be missing
   occurrences of a repeating event, or that include events whose timezone isn't
   saved with them, come back flagged `capped: true` so the assistant knows not to treat
   them as a free/busy answer. Double-check repeating events against your
   calendar app.
+
+**Approving changes is up to your assistant.** The server marks
+`update_event` and `delete_event` as destructive so that assistants know to ask
+you before using them, but it can't see whether you said yes. `delete_event`
+also requires `confirm: "DELETE"`: a deliberate cue to the assistant that
+deleting is serious, not proof that you approved, since the assistant fills it
+in itself.
 
 ### Security notes
 
