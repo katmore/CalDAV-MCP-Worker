@@ -131,7 +131,7 @@ You'll need:
 ### 1. Get the code
 
 ```sh
-git clone https://github.com/ackspony/CalDAV-MCP-Worker.git
+git clone https://github.com/katmore/CalDAV-MCP-Worker.git
 cd CalDAV-MCP-Worker
 npm ci
 npx wrangler login
