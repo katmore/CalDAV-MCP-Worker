@@ -156,8 +156,10 @@ new version, repeat it with the prompts in the README's
 
 - Only iCloud has been tested live. Other CalDAV providers are untested.
 - Repeating events, timezones and all-day events are tested with sample data
-  only (including cancelling one occurrence across the November daylight-saving
-  change), not yet against iCloud or the iPhone Calendar app. Treat results
+  only. Cancelling one occurrence of a weekly iPhone-made event in a saved
+  timezone, after the November daylight-saving change, was checked live on
+  iCloud and in the iPhone Calendar app. Series with edited occurrences, and
+  series from other apps, were not. Treat results
   flagged `capped` as incomplete.
 - Editing repeating events, all-day events and invitations is refused on
   purpose.
