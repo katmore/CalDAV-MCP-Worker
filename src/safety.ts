@@ -38,3 +38,31 @@ export async function creationResult(uid: string, resourceId: string, readBack: 
       note: 'The server accepted creation, but immediate read-back failed. Locate this UID before retrying; do not create a duplicate.' };
   }
 }
+
+// Adds an EXDATE for one generated occurrence of a series and returns the new resource text.
+// The date is written in the series' own start format (same zone, or DATE for all-day).
+export function cancelOccurrence(root: ICAL.Component, occurrence: string) {
+  const events = root.getAllSubcomponents('vevent');
+  const masters = events.filter(e => !e.hasProperty('recurrence-id'));
+  if (masters.length !== 1 || !masters[0].hasProperty('rrule')) throw new RangeError('Not a repeating series');
+  const master = masters[0];
+  const target = new Date(occurrence).getTime();
+  const overridden = events.some(e => e.hasProperty('recurrence-id') && (e.getFirstPropertyValue('recurrence-id') as ICAL.Time).toJSDate().getTime() === target);
+  if (overridden) throw new RangeError('That occurrence was edited separately; it cannot be cancelled here');
+  const iterator = new ICAL.Event(master).iterator();
+  let next: ICAL.Time | null;
+  let count = 0;
+  while ((next = iterator.next()) && count++ < 20000) {
+    const at = next.toJSDate().getTime();
+    if (at > target) break;
+    if (at === target) {
+      const exdate = master.addPropertyWithValue('exdate', next.clone());
+      // ical.js writes the local time but not its zone; without TZID the date would read as floating.
+      if (!next.isDate && next.zone.tzid !== 'UTC' && next.zone.tzid !== 'floating') exdate.setParameter('tzid', next.zone.tzid);
+      master.updatePropertyWithValue('dtstamp', ICAL.Time.fromJSDate(new Date(), true));
+      master.updatePropertyWithValue('sequence', Number(master.getFirstPropertyValue('sequence') || 0) + 1);
+      return root.toString();
+    }
+  }
+  throw new RangeError('No such occurrence in this series');
+}

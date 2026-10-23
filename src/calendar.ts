@@ -3,7 +3,7 @@ import { createDAVClient } from 'tsdav';
 import ICAL from 'ical.js';
 import { z } from 'zod';
 import { ConfigurationError, caldavUrl, guardedFetch, trustedHosts } from './transport';
-import { assertResource, checkWrite, isAllowedLogin, isSeries, prepareCalendar, sameResource, creationResult } from './safety';
+import { assertResource, checkWrite, isAllowedLogin, cancelOccurrence, isSeries, prepareCalendar, sameResource, creationResult } from './safety';
 
 export type Props = { login: string; name: string; email: string };
 export type CalendarEnv = { CALDAV_USERNAME: string; CALDAV_PASSWORD: string; ALLOWED_GITHUB_LOGIN: string; CALDAV_URL: string; CALDAV_TRUSTED_HOSTS?: string };
@@ -224,12 +224,13 @@ export class CalendarServer {
       } catch (e) { return failure(e); }
     });
 
-    this.server.registerTool('delete_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Delete a calendar event resource. This operation is irreversible and must be explicitly requested by the user. Recurring series require explicit acknowledgement.', inputSchema: z.object({
+    this.server.registerTool('delete_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Delete a calendar event resource. This operation is irreversible and must be explicitly requested by the user. Recurring series require explicit acknowledgement. To cancel one occurrence of a series, pass occurrence (its start, as listed by list_events) instead; the rest of the series is kept.', inputSchema: z.object({
       calendarId: z.string(), resourceId: z.string(),
       etag: z.string().min(1),
       confirm: z.literal('DELETE'),
       confirmEntireSeries: z.boolean().default(false),
-    }) }, async ({ calendarId, resourceId, etag, confirmEntireSeries }) => {
+      occurrence: z.string().datetime({ offset: true }).optional(),
+    }) }, async ({ calendarId, resourceId, etag, confirmEntireSeries, occurrence }) => {
       try {
         const client = await dav();
         const { object } = await getObject(client, calendarId, resourceId);
@@ -237,6 +238,11 @@ export class CalendarServer {
         const events = root.getAllSubcomponents('vevent');
         if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
         if (events.some(e => e.hasProperty('attendee') || e.hasProperty('organizer'))) throw new RangeError('Invitation deletion refused');
+        if (occurrence !== undefined) {
+          if (confirmEntireSeries) throw new RangeError('Choose either one occurrence or the entire series');
+          await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: cancelOccurrence(root, occurrence) } }));
+          return result({ cancelled: true, resourceId, occurrence });
+        }
         if (isSeries(events) && !confirmEntireSeries) {
           throw new RangeError('This is a recurrence; entire-series deletion requires confirmation');
         }

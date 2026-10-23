@@ -93,7 +93,9 @@ The server enforces these no matter what the assistant asks for.
   alarms) are left untouched.
 - **What can't be deleted:** invitations. Deleting a repeating event removes
   the whole series, so the assistant has to ask for whole-series deletion
-  explicitly; single occurrences can't be changed or removed on their own.
+  explicitly. A single occurrence can be cancelled on its own (the rest of the
+  series stays), but not if it was edited separately. Single occurrences can't
+  be edited yet.
 - **Repeating events may be incomplete.** A listing that might be missing
   occurrences, or has events without a saved timezone, comes back with
   `capped: true`. Check repeating events against your calendar app.

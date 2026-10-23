@@ -451,6 +451,125 @@ describe('delete_event',()=> {
   assert.deepEqual(writes,[{op:'delete',url:CAL+'series.ics',etag:'"1"'}]);
  });
 
+
+ describe('one occurrence of a series',()=> {
+  const WEEKLY=timed('w','20300101T100000Z','20300101T110000Z','RRULE:FREQ=WEEKLY','SEQUENCE:2');
+  const LA=ics('BEGIN:VTIMEZONE','TZID:America/Los_Angeles','BEGIN:DAYLIGHT','TZOFFSETFROM:-0800','TZOFFSETTO:-0700','TZNAME:PDT','DTSTART:19700308T020000','RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU','END:DAYLIGHT','BEGIN:STANDARD','TZOFFSETFROM:-0700','TZOFFSETTO:-0800','TZNAME:PST','DTSTART:19701101T020000','RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU','END:STANDARD','END:VTIMEZONE',
+   vevent('UID:z','DTSTART;TZID=America/Los_Angeles:20301026T090000','DTEND;TZID=America/Los_Angeles:20301026T100000','SUMMARY:Swap','RRULE:FREQ=WEEKLY'));
+  const run=async(data:string,occurrence:string,extra={})=> {
+   const t=await tools([obj('s.ics',data)]);
+   return {...t,r:await t.call('delete_event',del(CAL+'s.ics',{occurrence,...extra}))};
+  };
+
+  test('adds an EXDATE to the series and keeps the rest of the resource',async()=> {
+   const {r,writes}=await run(ics(WEEKLY),'2030-01-15T10:00:00Z');
+   assert.deepEqual(r.body,{cancelled:true,resourceId:CAL+'s.ics',occurrence:'2030-01-15T10:00:00Z'});
+   assert.equal(writes.length,1);
+   assert.equal(writes[0].op,'update');
+   assert.equal(writes[0].etag,'"1"');
+   const ev=only(writes[0].data!);
+   assert.equal(text(ev,'exdate'),'2030-01-15T10:00:00Z');
+   assert.equal(text(ev,'rrule'),'FREQ=WEEKLY');
+   assert.equal(text(ev,'sequence'),'3');
+   assert.equal(ev.getAllProperties('exdate').length,1);
+  });
+
+  test('keeps exclusions already on the series',async()=> {
+   const {writes}=await run(ics(timed('w','20300101T100000Z','20300101T110000Z','RRULE:FREQ=WEEKLY','EXDATE:20300108T100000Z')),'2030-01-15T10:00:00Z');
+   assert.deepEqual(only(writes[0].data!).getAllProperties('exdate').map(p=>String(p.getFirstValue())).sort(),['2030-01-08T10:00:00Z','2030-01-15T10:00:00Z']);
+  });
+
+  test('the cancelled occurrence is gone from list_events and the others stay',async()=> {
+   const {writes}=await run(ics(WEEKLY),'2030-01-08T10:00:00Z');
+   const t=await tools([obj('s.ics',writes[0].data!)]);
+   const r=await t.call('list_events',{...RANGE,end:'2030-01-20T00:00:00Z'});
+   assert.deepEqual(r.body.occurrences.map((o:any)=>o.start),['2030-01-01T10:00:00.000Z','2030-01-15T10:00:00.000Z']);
+  });
+
+  test('matches a zoned series by its local time and writes the exclusion in that zone, across the November DST change',async()=> {
+   // 2030-10-26 09:00 PDT = 16:00Z; 2030-11-02 09:00 PDT = 16:00Z; 2030-11-09 09:00 PST = 17:00Z
+   const {r,writes}=await run(LA,'2030-11-09T17:00:00Z');
+   assert.equal(r.isError,false);
+   const ex=only(writes[0].data!).getFirstProperty('exdate')!;
+   assert.equal(ex.getParameter('tzid'),'America/Los_Angeles');
+   assert.equal(String(ex.getFirstValue()),'2030-11-09T09:00:00');
+   assert.equal(writes[0].data!.includes('BEGIN:VTIMEZONE'),true);
+   // the wall-clock time before the change is not an occurrence after it
+   assert.equal((await run(LA,'2030-11-09T16:00:00Z')).r.isError,true);
+  });
+
+  test('writes an all-day series exclusion as a DATE',async()=> {
+   const data=ics(vevent('UID:d','DTSTART;VALUE=DATE:20300101','DTEND;VALUE=DATE:20300102','SUMMARY:Day','RRULE:FREQ=DAILY'));
+   const {r,writes}=await run(data,'2030-01-03T00:00:00Z');
+   assert.equal(r.isError,false);
+   assert.match(writes[0].data!,/EXDATE;VALUE=DATE:20300103/);
+  });
+
+  test('refuses a time the series does not generate',async()=> {
+   for (const when of ['2030-01-02T10:00:00Z','2030-01-15T10:30:00Z','2029-12-25T10:00:00Z']) {
+    const {r,writes}=await run(ics(WEEKLY),when);
+    assert.equal(r.isError,true,when);
+    assert.deepEqual(writes,[]);
+   }
+  });
+
+  test('refuses an occurrence that is already cancelled',async()=> {
+   const {r,writes}=await run(ics(timed('w','20300101T100000Z','20300101T110000Z','RRULE:FREQ=WEEKLY','EXDATE:20300108T100000Z')),'2030-01-08T10:00:00Z');
+   assert.equal(r.isError,true);
+   assert.deepEqual(writes,[]);
+  });
+
+  test('refuses an occurrence that has its own edited copy',async()=> {
+   const data=ics(WEEKLY,vevent('UID:w','RECURRENCE-ID:20300108T100000Z','DTSTART:20300108T120000Z','DTEND:20300108T130000Z','SUMMARY:Moved'));
+   const {r,writes}=await run(data,'2030-01-08T10:00:00Z');
+   assert.equal(r.isError,true);
+   assert.deepEqual(writes,[]);
+   // other occurrences of the same resource can still be cancelled, and the copy is kept
+   const other=await run(data,'2030-01-15T10:00:00Z');
+   assert.equal(other.r.isError,false);
+   assert.equal(parse(other.writes[0].data!).getAllSubcomponents('vevent').length,2);
+  });
+
+  test('refuses things that are not a plain series',async()=> {
+   const cases:[string,string][]=[
+    ['a one-off event',ics(timed('p','20300101T100000Z','20300101T110000Z'))],
+    ['a resource with only edited copies',ics(vevent('UID:o','RECURRENCE-ID:20300108T100000Z','DTSTART:20300108T100000Z','DTEND:20300108T110000Z','SUMMARY:x'))],
+    ['an invitation',ics(timed('i','20300101T100000Z','20300101T110000Z','RRULE:FREQ=WEEKLY','ORGANIZER:mailto:a@example.test'))],
+   ];
+   for (const [name,data] of cases) {
+    const {r,writes}=await run(data,'2030-01-08T10:00:00Z');
+    assert.equal(r.isError,true,name);
+    assert.deepEqual(writes,[],name);
+   }
+  });
+
+  test('refuses an occurrence that is too far into the series to find',async()=> {
+   const {r,writes}=await run(ics(timed('m','20300101T100000Z','20300101T100100Z','RRULE:FREQ=MINUTELY')),'2031-01-01T10:00:00Z');
+   assert.equal(r.isError,true);
+   assert.deepEqual(writes,[]);
+  });
+
+  test('refuses to combine one occurrence with the entire series',async()=> {
+   const {r,writes}=await run(ics(WEEKLY),'2030-01-08T10:00:00Z',{confirmEntireSeries:true});
+   assert.equal(r.isError,true);
+   assert.deepEqual(writes,[]);
+  });
+
+  test('needs the current version and confirmation',async()=> {
+   const t=await tools([obj('s.ics',ics(WEEKLY),'"2"')]);
+   assert.equal((await t.call('delete_event',del(CAL+'s.ics',{occurrence:'2030-01-08T10:00:00Z'}))).isError,true);
+   assert.deepEqual(t.writes,[]);
+   assert.throws(()=>t.registered.delete_event.config.inputSchema.parse({calendarId:CAL,resourceId:CAL+'s.ics',etag:'"2"',occurrence:'2030-01-08T10:00:00Z'}));
+  });
+
+  test('reports a refused save as a failure',async()=> {
+   const t=await tools([obj('s.ics',ics(WEEKLY))],ENV,OWNER,{writeStatus:412});
+   const r=await t.call('delete_event',del(CAL+'s.ics',{occurrence:'2030-01-08T10:00:00Z'}));
+   assert.equal(r.isError,true);
+   assert.equal(r.body.cancelled,undefined);
+  });
+ });
+
  test.each([['an organizer','organizer'],['only attendees','attendee']] as const)('refuses to delete an invitation with %s',async(_case,kind)=> {
   const {call,writes}=await tools([obj('i.ics',ics(INVITES[kind]))]);
   assert.equal((await call('delete_event',del(CAL+'i.ics',{confirmEntireSeries:true}))).isError,true);
