@@ -1,4 +1,9 @@
 import ICAL from 'ical.js';
+// A request the server can't carry out as asked. Its message is fixed text that tells the
+// assistant what to change, so unlike other errors it is passed on as it is.
+export class RequestError extends Error {
+  constructor(message: string) { super(message); this.name = 'RequestError'; }
+}
 // The single owner check used at sign-in, on every request and before tools are registered.
 // An unset or empty allowlist denies everyone.
 export function isAllowedLogin(login: string | undefined, allowed: string | undefined) {
@@ -7,10 +12,10 @@ export function isAllowedLogin(login: string | undefined, allowed: string | unde
 export function assertResource(calendar: string, resource: string) {
   const c = new URL(calendar), r = new URL(resource);
   const prefix = c.pathname.endsWith('/') ? c.pathname : c.pathname + '/';
-  if (r.protocol !== 'https:' || r.origin !== c.origin || r.username || r.password || r.search || r.hash || !r.pathname.startsWith(prefix) || r.pathname.slice(prefix.length).includes('/') || /%2f|%5c/i.test(r.pathname) || !r.pathname.endsWith('.ics')) throw new RangeError('Invalid resource');
+  if (r.protocol !== 'https:' || r.origin !== c.origin || r.username || r.password || r.search || r.hash || !r.pathname.startsWith(prefix) || r.pathname.slice(prefix.length).includes('/') || /%2f|%5c/i.test(r.pathname) || !r.pathname.endsWith('.ics')) throw new RequestError('Invalid resource');
 }
 export async function checkWrite(response: Response) {
-  if (!response.ok) throw new RangeError(response.status === 412 ? 'Conflict' : 'Write rejected');
+  if (!response.ok) throw new RequestError(response.status === 412 ? 'Conflict: the event changed on the server; read it again and retry' : 'Write rejected by the calendar server');
 }
 export function isSeries(events: ICAL.Component[]) {
   return events.length > 1 || events.some(e => ['rrule', 'rdate', 'exdate', 'recurrence-id'].some(p => e.hasProperty(p)));

@@ -138,6 +138,23 @@ describe('error reporting',()=> {
   assert.deepEqual(r.body,{error:'CalDAV operation failed',reason:'TypeError'});
  });
 
+ test('our own explanations of what to change are passed on, other RangeErrors are not',async()=> {
+  const own=await tools([obj('i.ics',ics(INVITES.organizer))]);
+  const refused=await own.call('update_event',edit(CAL+'i.ics'));
+  assert.equal(refused.isError,true);
+  assert.match(refused.body.error,/confirmGuests: "NOTIFY GUESTS"/);
+  assert.equal(refused.body.reason,'RequestError');
+  const foreign=await (await failingWith(new RangeError('Invalid URL https://user:hunter2@calendar.example.test'))).call('list_calendars',{});
+  assert.deepEqual(foreign.body,{error:'CalDAV operation failed',reason:'RangeError'});
+ });
+
+ test('a stale version and a refused save say what to do',async()=> {
+  const stale=await (await tools([obj('p.ics',ics(timed('p','20300101T100000Z','20300101T110000Z')),'"2"')])).call('update_event',edit(CAL+'p.ics'));
+  assert.match(stale.body.error,/read again/);
+  const conflict=await (await tools([obj('p.ics',ics(timed('p','20300101T100000Z','20300101T110000Z')))],ENV,OWNER,{writeStatus:412})).call('update_event',edit(CAL+'p.ics'));
+  assert.match(conflict.body.error,/^Conflict: .*read it again/);
+ });
+
  test('something thrown that is not an Error reveals nothing',async()=> {
   const r=await (await failingWith('password=hunter2')).call('list_calendars',{});
   assert.deepEqual(r.body,{error:'CalDAV operation failed',reason:'unknown'});
@@ -1148,7 +1165,7 @@ describe('this and following occurrences of a series',()=> {
     const t=await tools([],ENV,OWNER,{client});
     const r=await t.call('update_event',edit(CAL+'s.ics',{occurrence:AT,scope:'thisAndFollowing'}));
     assert.equal(r.isError,true);
-    assert.equal(r.body.error,'CalDAV operation failed');
+    assert.match(r.body.error,/^Conflict/);
    });
   });
  });

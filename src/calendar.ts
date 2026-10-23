@@ -3,7 +3,7 @@ import { createDAVClient } from 'tsdav';
 import ICAL from 'ical.js';
 import { z } from 'zod';
 import { ConfigurationError, caldavUrl, guardedFetch, trustedHosts } from './transport';
-import { assertResource, checkWrite, isAllowedLogin, isSeries, prepareCalendar, sameResource, creationResult } from './checks';
+import { RequestError, assertResource, checkWrite, isAllowedLogin, isSeries, prepareCalendar, sameResource, creationResult } from './checks';
 import { cancelOccurrence, editOccurrence, editOneOff, editSeries, endSeriesBefore, isDateOnly, parseRule, setTime, splitSeriesAt } from './recurrence';
 import { isKnownZone, localTime, vtimezone } from './timezone';
 
@@ -29,7 +29,7 @@ export class CalendarServer {
       content: [{ type: 'text' as const, text: JSON.stringify(value) }],
     });
     const failure = (error: unknown) => ({ isError: true, ...result({
-      error: error instanceof ConfigurationError ? error.message : 'CalDAV operation failed',
+      error: error instanceof ConfigurationError || error instanceof RequestError ? error.message : 'CalDAV operation failed',
       reason: error instanceof Error ? error.name : 'unknown',
       // Do not expose exceptions or credentials.
     }) });
@@ -53,7 +53,7 @@ export class CalendarServer {
     const lookupCalendar = async (client: Awaited<ReturnType<typeof dav>>, calendarId: string) => {
       const calendars = await client.fetchCalendars();
       const calendar = calendars.find(c => c.url === calendarId);
-      if (!calendar) throw new RangeError('Invalid calendar identifier');
+      if (!calendar) throw new RequestError('Invalid calendar identifier');
       return calendar;
     };
 
@@ -62,7 +62,7 @@ export class CalendarServer {
       // Restrict user-supplied resources to a calendar freshly discovered from the CalDAV server.
       assertResource(calendar.url, resourceId);
       const objects = await client.fetchCalendarObjects({ calendar, objectUrls: [resourceId] });
-      if (objects.length !== 1 || !sameResource(objects[0].url, resourceId)) throw new RangeError('Resource not found');
+      if (objects.length !== 1 || !sameResource(objects[0].url, resourceId)) throw new RequestError('Resource not found');
       assertResource(calendar.url, objects[0].url);
       return { calendar, object: objects[0] };
     };
@@ -99,12 +99,12 @@ export class CalendarServer {
       end: z.string().datetime({ offset: true }),
     }) }, async ({ calendarId, start, end }) => {
       try {
-        if (new Date(end).getTime() <= new Date(start).getTime()) throw new RangeError('Invalid interval');
-        if (new Date(end).getTime() - new Date(start).getTime() > 90 * 86400000) throw new RangeError('Limit search to 90 days');
+        if (new Date(end).getTime() <= new Date(start).getTime()) throw new RequestError('Invalid interval');
+        if (new Date(end).getTime() - new Date(start).getTime() > 90 * 86400000) throw new RequestError('Limit search to 90 days');
         const client = await dav();
         const calendar = await lookupCalendar(client, calendarId);
         const objects = await client.fetchCalendarObjects({ calendar, timeRange: { start, end } });
-        if (objects.length > 250) throw new RangeError('Too many resources; narrow the interval');
+        if (objects.length > 250) throw new RequestError('Too many resources; narrow the interval');
         const afterMs = new Date(start).getTime();
         const beforeMs = new Date(end).getTime();
         const occurrences: unknown[] = [];
@@ -140,7 +140,7 @@ export class CalendarServer {
                 etag: obj.etag,
               });
             }
-            if (occurrences.length > 500) throw new RangeError('Too many occurrences; narrow interval');
+            if (occurrences.length > 500) throw new RequestError('Too many occurrences; narrow interval');
           }
           if (count >= 20000) capped = true;
         }
@@ -167,7 +167,7 @@ export class CalendarServer {
     const confirmGuests = z.literal('NOTIFY GUESTS').optional();
     const guestsNeedConfirmation = (events: ICAL.Component[], confirmed: unknown) => {
       if (!confirmed && events.some(e => e.hasProperty('attendee') || e.hasProperty('organizer'))) {
-        throw new RangeError('This event has guests and the change may email them; ask the user, then pass confirmGuests: "NOTIFY GUESTS"');
+        throw new RequestError('This event has guests and the change may email them; ask the user, then pass confirmGuests: "NOTIFY GUESTS"');
       }
     };
 
@@ -183,9 +183,9 @@ export class CalendarServer {
     }) }, async ({ calendarId, title, start, end, timezone, rrule, location, description }) => {
       try {
         const allDay = isDateOnly(start);
-        if (isDateOnly(end ?? start) !== allDay) throw new RangeError('Give both start and end as dates, or both as date-times');
-        if (!allDay && end === undefined) throw new RangeError('A timed event needs an end');
-        if (timezone !== undefined && !isKnownZone(timezone)) throw new RangeError('Unknown timezone');
+        if (isDateOnly(end ?? start) !== allDay) throw new RequestError('Give both start and end as dates, or both as date-times');
+        if (!allDay && end === undefined) throw new RequestError('A timed event needs an end');
+        if (timezone !== undefined && !isKnownZone(timezone)) throw new RequestError('Unknown timezone');
         const client = await dav();
         const calendar = await lookupCalendar(client, calendarId);
         const root = new ICAL.Component(['vcalendar', [], []]);
@@ -201,9 +201,9 @@ export class CalendarServer {
           first = ICAL.Time.fromDateString(start);
           last = ICAL.Time.fromDateString(end ?? start);
           last.adjust(1, 0, 0, 0);
-          if (last.compare(first) <= 0) throw new RangeError('Invalid event interval');
+          if (last.compare(first) <= 0) throw new RequestError('Invalid event interval');
         } else {
-          if (new Date(end!).getTime() <= new Date(start).getTime()) throw new RangeError('Invalid event interval');
+          if (new Date(end!).getTime() <= new Date(start).getTime()) throw new RequestError('Invalid event interval');
           if (timezone && timezone !== 'UTC') {
             const vt = vtimezone(timezone, new Date(start).getTime());
             const zone = new ICAL.Timezone(vt);
@@ -250,21 +250,21 @@ export class CalendarServer {
         const { object } = await getObject(client, calendarId, resourceId);
         const root = prepareCalendar(object.data);
         const events = root.getAllSubcomponents('vevent');
-        if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
+        if (!object.etag || object.etag !== etag) throw new RequestError('Event changed; read again');
         guestsNeedConfirmation(events, confirmGuests);
         const changes = { title, start, end, rrule, location, description };
         const save = async (data: string) => { await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data } })); };
         if (!isSeries(events)) {
-          if (events.length !== 1 || occurrence !== undefined) throw new RangeError('Not a repeating event');
+          if (events.length !== 1 || occurrence !== undefined) throw new RequestError('Not a repeating event');
           await save(editOneOff(root, changes));
           return result({ updated: true, resourceId });
         }
         if (scope === 'entireSeries') {
-          if (occurrence !== undefined) throw new RangeError('entireSeries takes no occurrence');
+          if (occurrence !== undefined) throw new RequestError('entireSeries takes no occurrence');
           await save(editSeries(root, changes));
           return result({ updated: true, resourceId, scope });
         }
-        if (occurrence === undefined) throw new RangeError('occurrence is required for this scope');
+        if (occurrence === undefined) throw new RequestError('occurrence is required for this scope');
         if (scope === 'occurrence') {
           await save(editOccurrence(root, occurrence, changes));
           return result({ updated: true, resourceId, occurrence });
@@ -304,10 +304,10 @@ export class CalendarServer {
         const { object } = await getObject(client, calendarId, resourceId);
         const root = prepareCalendar(object.data);
         const events = root.getAllSubcomponents('vevent');
-        if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
+        if (!object.etag || object.etag !== etag) throw new RequestError('Event changed; read again');
         guestsNeedConfirmation(events, confirmGuests);
         if (occurrence !== undefined) {
-          if (confirmEntireSeries) throw new RangeError('Choose either one occurrence or the entire series');
+          if (confirmEntireSeries) throw new RequestError('Choose either one occurrence or the entire series');
           if (scope === 'thisAndFollowing') {
             const ended = endSeriesBefore(root, occurrence);
             if (ended === null) {
@@ -320,9 +320,9 @@ export class CalendarServer {
           await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: cancelOccurrence(root, occurrence) } }));
           return result({ cancelled: true, resourceId, occurrence });
         }
-        if (scope === 'thisAndFollowing') throw new RangeError('occurrence is required for scope thisAndFollowing');
+        if (scope === 'thisAndFollowing') throw new RequestError('occurrence is required for scope thisAndFollowing');
         if (isSeries(events) && !confirmEntireSeries) {
-          throw new RangeError('This is a recurrence; entire-series deletion requires confirmation');
+          throw new RequestError('This is a recurrence; entire-series deletion requires confirmation');
         }
         await checkWrite(await client.deleteCalendarObject({ calendarObject: object }));
         return result({ deleted: true, resourceId });

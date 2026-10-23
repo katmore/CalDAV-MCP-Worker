@@ -1,4 +1,5 @@
 import ICAL from 'ical.js';
+import { RequestError } from './checks';
 
 // Pure edits of iCalendar text: one-off events, whole series, single occurrences and
 // "this and following". Each function changes the component it is given and the caller
@@ -20,9 +21,9 @@ const wall = (t: ICAL.Time) => Date.UTC(t.year, t.month - 1, t.day, t.hour, t.mi
 // Reads an RRULE such as FREQ=WEEKLY;BYDAY=MO (a leading "RRULE:" is accepted).
 export function parseRule(text: string) {
   let rule: ICAL.Recur;
-  try { rule = ICAL.Recur.fromString(text.replace(/^RRULE:/i, '').trim()); } catch { throw new RangeError('Invalid repeat rule'); }
-  if (!SERIES_FREQUENCIES.includes(rule.freq)) throw new RangeError('Repeat rule must be DAILY, WEEKLY, MONTHLY or YEARLY');
-  if (rule.count && rule.until) throw new RangeError('Repeat rule cannot have both COUNT and UNTIL');
+  try { rule = ICAL.Recur.fromString(text.replace(/^RRULE:/i, '').trim()); } catch { throw new RequestError('Invalid repeat rule'); }
+  if (!SERIES_FREQUENCIES.includes(rule.freq)) throw new RequestError('Repeat rule must be DAILY, WEEKLY, MONTHLY or YEARLY');
+  if (rule.count && rule.until) throw new RequestError('Repeat rule cannot have both COUNT and UNTIL');
   return rule;
 }
 
@@ -45,12 +46,12 @@ export const stamp = (e: ICAL.Component) => {
 // A series keeps its own zone; one-offs and single occurrences are written in UTC.
 function toTime(value: string, like: ICAL.Time, keepZone: boolean, lastDay = false) {
   if (like.isDate) {
-    if (!isDateOnly(value)) throw new RangeError('All-day events take dates like 2030-01-05');
+    if (!isDateOnly(value)) throw new RequestError('All-day events take dates like 2030-01-05');
     const day = ICAL.Time.fromDateString(value);
     if (lastDay) day.adjust(1, 0, 0, 0);
     return day;
   }
-  if (isDateOnly(value)) throw new RangeError('This event has a time; give a date and time with an offset');
+  if (isDateOnly(value)) throw new RequestError('This event has a time; give a date and time with an offset');
   const instant = ICAL.Time.fromJSDate(new Date(value), true);
   return keepZone ? instant.convertToZone(like.zone) : instant;
 }
@@ -70,7 +71,7 @@ function applyTimes(ev: ICAL.Component, { start, end }: Changes, keepZone: boole
   let last: ICAL.Time;
   if (end === undefined) { last = first.clone(); last.addDuration(length); }
   else last = toTime(end, event.startDate, keepZone, true);
-  if (last.compare(first) <= 0) throw new RangeError('End must be after start');
+  if (last.compare(first) <= 0) throw new RequestError('End must be after start');
   setTime(ev, 'dtstart', first);
   if (end === undefined && ev.hasProperty('duration')) return;
   ev.removeAllProperties('duration');
@@ -81,7 +82,7 @@ function applyTimes(ev: ICAL.Component, { start, end }: Changes, keepZone: boole
 function splitSeries(root: ICAL.Component) {
   const events = root.getAllSubcomponents('vevent');
   const masters = events.filter(e => !e.hasProperty('recurrence-id'));
-  if (masters.length !== 1 || !(masters[0].hasProperty('rrule') || masters[0].hasProperty('rdate'))) throw new RangeError('Not a repeating series');
+  if (masters.length !== 1 || !(masters[0].hasProperty('rrule') || masters[0].hasProperty('rdate'))) throw new RequestError('Not a repeating series');
   return { master: masters[0], overrides: events.filter(e => e.hasProperty('recurrence-id')) };
 }
 
@@ -97,7 +98,7 @@ function findOccurrence(master: ICAL.Component, occurrence: string) {
     if (at > target) break;
     if (at === target) return next;
   }
-  throw new RangeError('No such occurrence in this series');
+  throw new RequestError('No such occurrence in this series');
 }
 
 const isFirstOccurrence = (master: ICAL.Component, at: ICAL.Time) => {
@@ -130,7 +131,7 @@ function shiftDates(master: ICAL.Component, overrides: ICAL.Component[], seconds
 
 // Edits an event that does not repeat. Giving it an rrule makes it repeat.
 export function editOneOff(root: ICAL.Component, changes: Changes) {
-  if (nothingToChange(changes)) throw new RangeError('Nothing to change');
+  if (nothingToChange(changes)) throw new RequestError('Nothing to change');
   const ev = root.getFirstSubcomponent('vevent')!;
   applyText(ev, changes);
   applyTimes(ev, changes, false);
@@ -143,14 +144,14 @@ export function editOneOff(root: ICAL.Component, changes: Changes) {
 // moves the series (cancelled dates and edited occurrences move with it); a new rrule changes
 // how it repeats.
 export function editSeries(root: ICAL.Component, changes: Changes) {
-  if (nothingToChange(changes)) throw new RangeError('Nothing to change');
+  if (nothingToChange(changes)) throw new RequestError('Nothing to change');
   const { master, overrides } = splitSeries(root);
   const before = (master.getFirstPropertyValue('dtstart') as ICAL.Time).clone();
   const rule = changes.rrule === undefined ? undefined : parseRule(changes.rrule);
   applyText(master, changes);
   applyTimes(master, changes, true);
   const after = master.getFirstPropertyValue('dtstart') as ICAL.Time;
-  if (!rule && movesDay(before, after) && hasDayParts(master)) throw new RangeError('This series repeats on fixed days; give a new rrule to move it to another day');
+  if (!rule && movesDay(before, after) && hasDayParts(master)) throw new RequestError('This series repeats on fixed days; give a new rrule to move it to another day');
   const shift = wall(after) - wall(before);
   if (shift !== 0) shiftDates(master, overrides, shift);
   if (rule) master.updatePropertyWithValue('rrule', rule);
@@ -174,8 +175,8 @@ export function cancelOccurrence(root: ICAL.Component, occurrence: string) {
 // creating it from the series when the occurrence has none yet. The series itself and the
 // other overrides are not touched.
 export function editOccurrence(root: ICAL.Component, occurrence: string, changes: Changes) {
-  if (nothingToChange(changes)) throw new RangeError('Nothing to change');
-  if (changes.rrule !== undefined) throw new RangeError('One occurrence cannot have its own repeat rule');
+  if (nothingToChange(changes)) throw new RequestError('Nothing to change');
+  if (changes.rrule !== undefined) throw new RequestError('One occurrence cannot have its own repeat rule');
   const { master, overrides } = splitSeries(root);
   const target = new Date(occurrence).getTime();
   let override = overrides.find(e => startOf(e) === target);
@@ -261,7 +262,7 @@ export function endSeriesBefore(root: ICAL.Component, occurrence: string) {
 // and a new series (a new resource, uid `uid`) continues from it with the changes. At the
 // first occurrence that is the whole series, so it is edited in place and nothing is created.
 export function splitSeriesAt(root: ICAL.Component, occurrence: string, changes: Changes, uid: string) {
-  if (nothingToChange(changes)) throw new RangeError('Nothing to change');
+  if (nothingToChange(changes)) throw new RequestError('Nothing to change');
   const { master } = splitSeries(root);
   const at = findOccurrence(master, occurrence);
   if (isFirstOccurrence(master, at)) return { current: editSeries(root, changes), created: undefined };
@@ -274,7 +275,7 @@ export function splitSeriesAt(root: ICAL.Component, occurrence: string, changes:
   applyText(rest, changes);
   applyTimes(rest, changes, true);
   const first = rest.getFirstPropertyValue('dtstart') as ICAL.Time;
-  if (!rule && movesDay(at, first) && hasDayParts(rest)) throw new RangeError('This series repeats on fixed days; give a new rrule to move it to another day');
+  if (!rule && movesDay(at, first) && hasDayParts(rest)) throw new RequestError('This series repeats on fixed days; give a new rrule to move it to another day');
   const shift = wall(first) - wall(at);
   if (shift !== 0) shiftDates(rest, moved, shift);
   if (rule) rest.updatePropertyWithValue('rrule', rule);
