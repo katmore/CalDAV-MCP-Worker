@@ -160,7 +160,8 @@ new version, repeat it with the prompts in the README's
   timezone, after the November daylight-saving change, was checked live on
   iCloud and in the iPhone Calendar app. Renaming one occurrence and moving
   another, on the same kind of event, was checked the same way. Splitting a
-  series ("this and following") and series from other apps were not. Treat results
+  series ("this and following") and ending a series early were checked the same
+  way. Series from other apps were not. Treat results
   flagged `capped` as incomplete.
 - Editing a whole repeating series, all-day events and invitations is refused
   on purpose.
