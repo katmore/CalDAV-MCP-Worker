@@ -89,14 +89,17 @@ The server enforces these no matter what the assistant asks for.
   an event never replaces an existing one.
 - **What can't be edited:** a whole repeating series, all-day events and
   invitations. One occurrence of a repeating event can be edited (title, time,
-  location or description); the rest of the series is left alone.
+  location or description); the rest of the series is left alone. The
+  assistant can also change "this and following": the series is split in two at
+  that occurrence, and only the time of day can change.
   Events defined by a duration rather than an end time can't have their times
   changed. When you edit an event, details the server doesn't handle (such as
   alarms) are left untouched.
 - **What can't be deleted:** invitations. Deleting a repeating event removes
   the whole series, so the assistant has to ask for whole-series deletion
   explicitly. A single occurrence can be cancelled on its own (the rest of the
-  series stays), but not if it was edited separately.
+  series stays), but not if it was edited separately. "This and following" ends
+  the series just before that occurrence.
 - **Repeating events may be incomplete.** A listing that might be missing
   occurrences, or has events without a saved timezone, comes back with
   `capped: true`. Check repeating events against your calendar app.

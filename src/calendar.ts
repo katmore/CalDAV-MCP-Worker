@@ -3,7 +3,7 @@ import { createDAVClient } from 'tsdav';
 import ICAL from 'ical.js';
 import { z } from 'zod';
 import { ConfigurationError, caldavUrl, guardedFetch, trustedHosts } from './transport';
-import { assertResource, checkWrite, isAllowedLogin, cancelOccurrence, editOccurrence, isSeries, setTime, prepareCalendar, sameResource, creationResult } from './safety';
+import { assertResource, checkWrite, isAllowedLogin, cancelOccurrence, editOccurrence, endSeriesBefore, splitSeriesAt, isSeries, setTime, prepareCalendar, sameResource, creationResult } from './safety';
 
 export type Props = { login: string; name: string; email: string };
 export type CalendarEnv = { CALDAV_USERNAME: string; CALDAV_PASSWORD: string; ALLOWED_GITHUB_LOGIN: string; CALDAV_URL: string; CALDAV_TRUSTED_HOSTS?: string };
@@ -47,6 +47,7 @@ export class CalendarServer {
       return client;
     };
 
+    const resourceUrl = (calendarUrl: string, id: string) => new URL(`${id}.ics`, calendarUrl.endsWith('/') ? calendarUrl : calendarUrl + '/').href;
     const lookupCalendar = async (client: Awaited<ReturnType<typeof dav>>, calendarId: string) => {
       const calendars = await client.fetchCalendars();
       const calendar = calendars.find(c => c.url === calendarId);
@@ -182,7 +183,7 @@ export class CalendarServer {
         if (location) ev.addPropertyWithValue('location', location);
         if (description) ev.addPropertyWithValue('description', description);
         root.addSubcomponent(ev);
-        const resourceId = new URL(`${id}.ics`, calendar.url.endsWith('/') ? calendar.url : calendar.url + '/').href;
+        const resourceId = resourceUrl(calendar.url, id);
         await checkWrite(await client.createCalendarObject({ calendar, filename: `${id}.ics`, iCalString: root.toString(), headers: { 'If-None-Match': '*' } }));
         return result(await creationResult(uid, resourceId, async () => {
           const { object } = await getObject(client, calendarId, resourceId);
@@ -191,15 +192,16 @@ export class CalendarServer {
       } catch (e) { return failure(e); }
     });
 
-    this.server.registerTool('update_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Update a nonrecurring VEVENT resource. Refuses a whole recurring series. To change one occurrence of a series, pass occurrence (its start, as listed by list_events); only that occurrence changes. Moving only start keeps the occurrence length.', inputSchema: z.object({
+    this.server.registerTool('update_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Update a nonrecurring VEVENT resource. Refuses a whole recurring series. To change one occurrence of a series, pass occurrence (its start, as listed by list_events); only that occurrence changes. Moving only start keeps the occurrence length. With scope thisAndFollowing the change applies from that occurrence on: the series is split into two, only the time of day can change, and the result includes the new series as newResourceId.', inputSchema: z.object({
       calendarId: z.string(), resourceId: z.string(), etag: z.string().min(1),
       occurrence: z.string().datetime({ offset: true }).optional(),
+      scope: z.enum(['occurrence', 'thisAndFollowing']).default('occurrence'),
       title: z.string().min(1).max(500).optional(),
       start: z.string().datetime({ offset: true }).optional(),
       end: z.string().datetime({ offset: true }).optional(),
       location: z.string().optional(),
       description: z.string().optional(),
-    }) }, async ({ calendarId, resourceId, etag, occurrence, title, start, end, location, description }) => {
+    }) }, async ({ calendarId, resourceId, etag, occurrence, scope, title, start, end, location, description }) => {
       try {
         const client = await dav();
         const { object } = await getObject(client, calendarId, resourceId);
@@ -208,9 +210,27 @@ export class CalendarServer {
         if (occurrence !== undefined) {
           if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
           if (events.some(e => e.hasProperty('attendee') || e.hasProperty('organizer'))) throw new RangeError('Invitation edits refused');
-          await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: editOccurrence(root, occurrence, { title, start, end, location, description }) } }));
+          const changes = { title, start, end, location, description };
+          if (scope === 'thisAndFollowing') {
+            const calendar = await lookupCalendar(client, calendarId);
+            const id = crypto.randomUUID();
+            const split = splitSeriesAt(root, occurrence, changes, id + '@private-caldav-mcp');
+            const newResourceId = resourceUrl(calendar.url, id);
+            // The new series is created first: if the old one then cannot be shortened, the new one is
+            // removed again, and at worst the later occurrences exist twice rather than not at all.
+            await checkWrite(await client.createCalendarObject({ calendar, filename: `${id}.ics`, iCalString: split.created, headers: { 'If-None-Match': '*' } }));
+            try {
+              await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: split.current } }));
+            } catch (e) {
+              await client.deleteCalendarObject({ calendarObject: { url: newResourceId } as typeof object }).catch(() => undefined);
+              throw e;
+            }
+            return result({ updated: true, resourceId, newResourceId, occurrence, scope });
+          }
+          await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: editOccurrence(root, occurrence, changes) } }));
           return result({ updated: true, resourceId, occurrence });
         }
+        if (scope === 'thisAndFollowing') throw new RangeError('occurrence is required for scope thisAndFollowing');
         if (events.length !== 1 || isSeries(events)) throw new RangeError('Recurring event edit refused');
         const ev = events[0];
         if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
@@ -231,13 +251,14 @@ export class CalendarServer {
       } catch (e) { return failure(e); }
     });
 
-    this.server.registerTool('delete_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Delete a calendar event resource. This operation is irreversible and must be explicitly requested by the user. Recurring series require explicit acknowledgement. To cancel one occurrence of a series, pass occurrence (its start, as listed by list_events) instead; the rest of the series is kept.', inputSchema: z.object({
+    this.server.registerTool('delete_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Delete a calendar event resource. This operation is irreversible and must be explicitly requested by the user. Recurring series require explicit acknowledgement. To cancel one occurrence of a series, pass occurrence (its start, as listed by list_events) instead; the rest of the series is kept. With scope thisAndFollowing, that occurrence and every later one are removed by ending the series before it.', inputSchema: z.object({
       calendarId: z.string(), resourceId: z.string(),
       etag: z.string().min(1),
       confirm: z.literal('DELETE'),
       confirmEntireSeries: z.boolean().default(false),
       occurrence: z.string().datetime({ offset: true }).optional(),
-    }) }, async ({ calendarId, resourceId, etag, confirmEntireSeries, occurrence }) => {
+      scope: z.enum(['occurrence', 'thisAndFollowing']).default('occurrence'),
+    }) }, async ({ calendarId, resourceId, etag, confirmEntireSeries, occurrence, scope }) => {
       try {
         const client = await dav();
         const { object } = await getObject(client, calendarId, resourceId);
@@ -247,9 +268,14 @@ export class CalendarServer {
         if (events.some(e => e.hasProperty('attendee') || e.hasProperty('organizer'))) throw new RangeError('Invitation deletion refused');
         if (occurrence !== undefined) {
           if (confirmEntireSeries) throw new RangeError('Choose either one occurrence or the entire series');
+          if (scope === 'thisAndFollowing') {
+            await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: endSeriesBefore(root, occurrence) } }));
+            return result({ cancelled: true, resourceId, occurrence, scope });
+          }
           await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: cancelOccurrence(root, occurrence) } }));
           return result({ cancelled: true, resourceId, occurrence });
         }
+        if (scope === 'thisAndFollowing') throw new RangeError('occurrence is required for scope thisAndFollowing');
         if (isSeries(events) && !confirmEntireSeries) {
           throw new RangeError('This is a recurrence; entire-series deletion requires confirmation');
         }

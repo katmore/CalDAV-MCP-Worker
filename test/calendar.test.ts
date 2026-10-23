@@ -578,6 +578,259 @@ describe('update_event on one occurrence of a series',()=> {
  });
 });
 
+describe('this and following occurrences of a series',()=> {
+ const ZONE=(...series:string[])=>ics('BEGIN:VTIMEZONE','TZID:America/Los_Angeles','BEGIN:DAYLIGHT','TZOFFSETFROM:-0800','TZOFFSETTO:-0700','TZNAME:PDT','DTSTART:19700308T020000','RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU','END:DAYLIGHT','BEGIN:STANDARD','TZOFFSETFROM:-0700','TZOFFSETTO:-0800','TZNAME:PST','DTSTART:19701101T020000','RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU','END:STANDARD','END:VTIMEZONE',...series);
+ const LA=(...extra:string[])=>ZONE(vevent('UID:z','DTSTART;TZID=America/Los_Angeles:20301026T090000','DTEND;TZID=America/Los_Angeles:20301026T100000','SUMMARY:Swap','RRULE:FREQ=WEEKLY',...extra));
+ const week=(...extra:string[])=>ics(vevent('UID:w','DTSTART:20300101T100000Z','DTEND:20300101T110000Z','SUMMARY:Weekly','LOCATION:Hall','RRULE:FREQ=WEEKLY',...extra));
+ const AT='2030-01-15T10:00:00Z';
+ const events=(data:string)=>parse(data).getAllSubcomponents('vevent');
+ const split=async(data:string,args:Record<string,unknown>={},occurrence=AT)=> {
+  const t=await tools([obj('s.ics',data)]);
+  return {...t,r:await t.call('update_event',edit(CAL+'s.ics',{title:'Changed',occurrence,scope:'thisAndFollowing',...args}))};
+ };
+ const ended=async(data:string,occurrence=AT)=> {
+  const t=await tools([obj('s.ics',data)]);
+  return {...t,r:await t.call('delete_event',del(CAL+'s.ics',{occurrence,scope:'thisAndFollowing'}))};
+ };
+
+ describe('editing',()=> {
+  test('ends the old series before the occurrence and starts a new one there',async()=> {
+   const {r,writes}=await split(week());
+   assert.equal(r.isError,false);
+   assert.equal(writes.length,2);
+   const [made,cut]=writes;
+   assert.equal(made.op,'create');
+   assert.deepEqual(made.headers,{'If-None-Match':'*'});
+   assert.match(made.url,/^https:\/\/calendar\.example\.test\/1\/calendars\/home\/[0-9a-f-]+\.ics$/);
+   assert.deepEqual(r.body,{updated:true,resourceId:CAL+'s.ics',newResourceId:made.url,occurrence:AT,scope:'thisAndFollowing'});
+   const fresh=only(made.data!);
+   assert.match(text(fresh,'uid'),/^[0-9a-f-]+@private-caldav-mcp$/);
+   assert.notEqual(text(fresh,'uid'),'w');
+   assert.equal(text(fresh,'summary'),'Changed');
+   assert.equal(text(fresh,'dtstart'),'2030-01-15T10:00:00Z');
+   assert.equal(text(fresh,'dtend'),'2030-01-15T11:00:00Z');
+   assert.equal(text(fresh,'rrule'),'FREQ=WEEKLY');
+   assert.equal(text(fresh,'location'),'Hall');
+   assert.equal(cut.op,'update');
+   assert.equal(cut.url,CAL+'s.ics');
+   assert.equal(cut.etag,'"1"');
+   const old=only(cut.data!);
+   assert.equal(text(old,'uid'),'w');
+   assert.equal(text(old,'summary'),'Weekly');
+   assert.equal(text(old,'dtstart'),'2030-01-01T10:00:00Z');
+   assert.equal(text(old,'rrule'),'FREQ=WEEKLY;UNTIL=20300115T095959Z');
+  });
+
+  test('the two series together list every occurrence once, with the change only from the split on',async()=> {
+   const {writes}=await split(week());
+   const t=await tools([obj('old.ics',writes[1].data!),obj('new.ics',writes[0].data!)]);
+   const r=await t.call('list_events',{...RANGE,end:'2030-01-30T00:00:00Z'});
+   assert.deepEqual(r.body.occurrences.map((o:any)=>[o.start,o.title]),[
+    ['2030-01-01T10:00:00.000Z','Weekly'],['2030-01-08T10:00:00.000Z','Weekly'],
+    ['2030-01-15T10:00:00.000Z','Changed'],['2030-01-22T10:00:00.000Z','Changed'],['2030-01-29T10:00:00.000Z','Changed']]);
+  });
+
+  test('divides a counted series between the two',async()=> {
+   const {writes}=await split(week('X-N:1').replace('RRULE:FREQ=WEEKLY','RRULE:FREQ=WEEKLY;COUNT=5'),{},'2030-01-15T10:00:00Z');
+   assert.equal(text(only(writes[0].data!),'rrule'),'FREQ=WEEKLY;COUNT=3');
+   assert.equal(text(only(writes[1].data!),'rrule'),'FREQ=WEEKLY;UNTIL=20300115T095959Z');
+  });
+
+  test('gives each series the cancelled dates that fall in its part',async()=> {
+   const {writes}=await split(week('EXDATE:20300108T100000Z,20300122T100000Z'));
+   assert.deepEqual(only(writes[1].data!).getAllProperties('exdate').flatMap(p=>p.getValues().map(String)),['2030-01-08T10:00:00Z']);
+   assert.deepEqual(only(writes[0].data!).getAllProperties('exdate').flatMap(p=>p.getValues().map(String)),['2030-01-22T10:00:00Z']);
+  });
+
+  test('moves later edited occurrences to the new series and keeps earlier ones',async()=> {
+   const before=vevent('UID:w','RECURRENCE-ID:20300108T100000Z','DTSTART:20300108T120000Z','DTEND:20300108T130000Z','SUMMARY:Early');
+   const after=vevent('UID:w','RECURRENCE-ID:20300122T100000Z','DTSTART:20300122T120000Z','DTEND:20300122T130000Z','SUMMARY:Late');
+   const data=ics(vevent('UID:w','DTSTART:20300101T100000Z','DTEND:20300101T110000Z','SUMMARY:Weekly','RRULE:FREQ=WEEKLY'),before,after);
+   const {writes}=await split(data);
+   const old=events(writes[1].data!), fresh=events(writes[0].data!);
+   assert.deepEqual(old.map(e=>text(e,'summary')),['Weekly','Early']);
+   assert.deepEqual(fresh.map(e=>text(e,'summary')),['Changed','Late']);
+   assert.equal(text(fresh[1],'uid'),text(fresh[0],'uid'));
+   assert.notEqual(text(fresh[1],'uid'),'w');
+   assert.equal(text(fresh[1],'recurrence-id'),'2030-01-22T10:00:00Z');
+  });
+
+  test('keeps alarms and the saved timezone in both series',async()=> {
+   const data=ZONE(vevent('UID:z','DTSTART;TZID=America/Los_Angeles:20301026T090000','DTEND;TZID=America/Los_Angeles:20301026T100000','SUMMARY:Swap','RRULE:FREQ=WEEKLY','BEGIN:VALARM','ACTION:DISPLAY','TRIGGER:-PT10M','DESCRIPTION:A','END:VALARM'));
+   const {writes}=await split(data,{},'2030-11-09T17:00:00Z');
+   for (const w of writes) assert.equal(w.data!.includes('BEGIN:VTIMEZONE'),true);
+   assert.equal(only(writes[0].data!).getAllSubcomponents('valarm').length,1);
+   const fresh=only(writes[0].data!);
+   assert.equal(fresh.getFirstProperty('dtstart')!.getParameter('tzid'),'America/Los_Angeles');
+   assert.equal(String(fresh.getFirstPropertyValue('dtstart')),'2030-11-09T09:00:00');
+   assert.equal(text(only(writes[1].data!),'rrule'),'FREQ=WEEKLY;UNTIL=20301109T165959Z');
+  });
+
+  test('changes the time of day from the split on, in the series zone, across the November change',async()=> {
+   // 2030-11-09 09:00 PST = 17:00Z; start one hour later and end 90 minutes later
+   const {r,writes}=await split(LA(),{start:'2030-11-09T18:00:00Z',end:'2030-11-09T19:30:00Z'},'2030-11-09T17:00:00Z');
+   assert.equal(r.isError,false);
+   const fresh=only(writes[0].data!);
+   assert.equal(String(fresh.getFirstPropertyValue('dtstart')),'2030-11-09T10:00:00');
+   assert.equal(String(fresh.getFirstPropertyValue('dtend')),'2030-11-09T11:30:00');
+   assert.equal(fresh.getFirstProperty('dtstart')!.getParameter('tzid'),'America/Los_Angeles');
+   const t=await tools([obj('old.ics',writes[1].data!),obj('new.ics',writes[0].data!)]);
+   const l=await t.call('list_events',{calendarId:CAL,start:'2030-10-25T00:00:00Z',end:'2030-11-24T00:00:00Z'});
+   assert.deepEqual(l.body.occurrences.map((o:any)=>o.start),['2030-10-26T16:00:00.000Z','2030-11-02T16:00:00.000Z','2030-11-09T18:00:00.000Z','2030-11-16T18:00:00.000Z','2030-11-23T18:00:00.000Z']);
+  });
+
+  test('moving only the start keeps the length, and only the end keeps the start',async()=> {
+   const a=await split(week(),{start:'2030-01-15T12:00:00Z'});
+   assert.equal(text(only(a.writes[0].data!),'dtstart'),'2030-01-15T12:00:00Z');
+   assert.equal(text(only(a.writes[0].data!),'dtend'),'2030-01-15T13:00:00Z');
+   const b=await split(week(),{end:'2030-01-15T10:30:00Z'});
+   assert.equal(text(only(b.writes[0].data!),'dtstart'),'2030-01-15T10:00:00Z');
+   assert.equal(text(only(b.writes[0].data!),'dtend'),'2030-01-15T10:30:00Z');
+  });
+
+  test('changes location and description alone',async()=> {
+   const {writes}=await split(week(),{title:undefined,location:'Room 2',description:'New'});
+   const fresh=only(writes[0].data!);
+   assert.equal(text(fresh,'summary'),'Weekly');
+   assert.equal(text(fresh,'location'),'Room 2');
+   assert.equal(text(fresh,'description'),'New');
+  });
+
+  test('works for a series with floating times',async()=> {
+   const data=ics(vevent('UID:f','DTSTART:20300101T100000','DTEND:20300101T110000','SUMMARY:Float','RRULE:FREQ=WEEKLY'));
+   const {r,writes}=await split(data,{},'2030-01-15T10:00:00Z');
+   assert.equal(r.isError,false);
+   assert.equal(text(only(writes[1].data!),'rrule'),'FREQ=WEEKLY;UNTIL=20300115T095959');
+  });
+
+  test.each([
+   ['the first occurrence',week(),{},'2030-01-01T10:00:00Z'],
+   ['a time the series does not generate',week(),{},'2030-01-16T10:00:00Z'],
+   ['a cancelled occurrence',week('EXDATE:20300115T100000Z'),{},AT],
+   ['an edit that changes nothing',week(),{title:undefined},AT],
+   ['a one-off event',ics(timed('p','20300101T100000Z','20300101T110000Z')),{},AT],
+   ['an invitation',week('ORGANIZER:mailto:a@example.test'),{},AT],
+   ['a series with extra dates',week('RDATE:20300103T100000Z'),{},AT],
+   ['a series with an exclusion rule',week('EXRULE:FREQ=WEEKLY;COUNT=1'),{},AT],
+   ['an all-day series',ics(vevent('UID:a','DTSTART;VALUE=DATE:20300101','DTEND;VALUE=DATE:20300102','SUMMARY:A','RRULE:FREQ=DAILY')),{},'2030-01-03T00:00:00Z'],
+   ['a move to another day',week(),{start:'2030-01-16T10:00:00Z'},AT],
+   ['an end before the start',week(),{end:'2030-01-15T09:00:00Z'},AT],
+   ['a time change with cancelled dates later on',week('EXDATE:20300122T100000Z'),{start:'2030-01-15T11:00:00Z'},AT],
+   ['a time change with edited occurrences later on',ics(vevent('UID:w','DTSTART:20300101T100000Z','DTEND:20300101T110000Z','SUMMARY:W','RRULE:FREQ=WEEKLY'),vevent('UID:w','RECURRENCE-ID:20300122T100000Z','DTSTART:20300122T100000Z','DTEND:20300122T110000Z','SUMMARY:L')),{start:'2030-01-15T11:00:00Z'},AT],
+   ['a time change for a duration-based series',ics(vevent('UID:d','DTSTART:20300101T100000Z','DURATION:PT1H','SUMMARY:D','RRULE:FREQ=WEEKLY')),{start:'2030-01-15T11:00:00Z'},AT],
+  ] as const)('refuses %s and writes nothing',async(_name,data,args,at)=> {
+   const {r,writes}=await split(data,args,at);
+   assert.equal(r.isError,true);
+   assert.deepEqual(writes,[]);
+  });
+
+  test('refuses when the event changed since it was read',async()=> {
+   const t=await tools([obj('s.ics',week(),'"2"')]);
+   const r=await t.call('update_event',edit(CAL+'s.ics',{occurrence:AT,scope:'thisAndFollowing'}));
+   assert.equal(r.isError,true);
+   assert.deepEqual(t.writes,[]);
+  });
+
+  test('needs an occurrence',async()=> {
+   const t=await tools([obj('s.ics',week())]);
+   assert.equal((await t.call('update_event',edit(CAL+'s.ics',{scope:'thisAndFollowing'}))).isError,true);
+   assert.deepEqual(t.writes,[]);
+  });
+
+  describe('when a write fails',()=> {
+   const failing=async(failCreate:boolean)=> {
+    const log:string[]=[];
+    const client={
+     fetchCalendars:async()=>[{url:CAL,displayName:'Home'}],
+     fetchCalendarObjects:async()=>[obj('s.ics',week())],
+     createCalendarObject:async({filename}:any)=>{log.push('create '+filename);return new Response(null,{status:failCreate?403:201});},
+     updateCalendarObject:async()=>{log.push('update');return new Response(null,{status:412});},
+     deleteCalendarObject:async({calendarObject}:any)=>{log.push('delete '+calendarObject.url);return new Response(null,{status:204});},
+    };
+    const t=await tools([],ENV,OWNER,{client});
+    return {log,r:await t.call('update_event',edit(CAL+'s.ics',{occurrence:AT,scope:'thisAndFollowing'}))};
+   };
+
+   test('removes the new series again when the old one cannot be shortened',async()=> {
+    const {log,r}=await failing(false);
+    assert.equal(r.isError,true);
+    assert.deepEqual(log.map(l=>l.split(' ')[0]),['create','update','delete']);
+    assert.equal(log[2].split(' ')[1],CAL+log[0].split(' ')[1]);
+   });
+
+   test('does not touch the old series when the new one cannot be created',async()=> {
+    const {log,r}=await failing(true);
+    assert.equal(r.isError,true);
+    assert.deepEqual(log.map(l=>l.split(' ')[0]),['create']);
+   });
+
+   test('still reports the failure when removing the new series fails too',async()=> {
+    const client={
+     fetchCalendars:async()=>[{url:CAL,displayName:'Home'}],
+     fetchCalendarObjects:async()=>[obj('s.ics',week())],
+     createCalendarObject:async()=>new Response(null,{status:201}),
+     updateCalendarObject:async()=>new Response(null,{status:412}),
+     deleteCalendarObject:async()=>{throw new Error('offline');},
+    };
+    const t=await tools([],ENV,OWNER,{client});
+    const r=await t.call('update_event',edit(CAL+'s.ics',{occurrence:AT,scope:'thisAndFollowing'}));
+    assert.equal(r.isError,true);
+    assert.equal(r.body.error,'CalDAV operation failed');
+   });
+  });
+ });
+
+ describe('cancelling',()=> {
+  test('ends the series before the occurrence and keeps everything earlier',async()=> {
+   const {r,writes}=await ended(week());
+   assert.deepEqual(r.body,{cancelled:true,resourceId:CAL+'s.ics',occurrence:AT,scope:'thisAndFollowing'});
+   assert.equal(writes.length,1);
+   assert.equal(writes[0].op,'update');
+   assert.equal(writes[0].etag,'"1"');
+   assert.equal(text(only(writes[0].data!),'rrule'),'FREQ=WEEKLY;UNTIL=20300115T095959Z');
+   const t=await tools([obj('s.ics',writes[0].data!)]);
+   const l=await t.call('list_events',{...RANGE,end:'2030-02-15T00:00:00Z'});
+   assert.deepEqual(l.body.occurrences.map((o:any)=>o.start),['2030-01-01T10:00:00.000Z','2030-01-08T10:00:00.000Z']);
+  });
+
+  test('drops later cancelled dates and edited occurrences, keeping earlier ones',async()=> {
+   const early=vevent('UID:w','RECURRENCE-ID:20300108T100000Z','DTSTART:20300108T120000Z','DTEND:20300108T130000Z','SUMMARY:Early');
+   const late=vevent('UID:w','RECURRENCE-ID:20300122T100000Z','DTSTART:20300122T120000Z','DTEND:20300122T130000Z','SUMMARY:Late');
+   const data=ics(vevent('UID:w','DTSTART:20300101T100000Z','DTEND:20300101T110000Z','SUMMARY:W','RRULE:FREQ=WEEKLY','EXDATE:20300108T100000Z,20300129T100000Z'),early,late);
+   const {writes}=await ended(data);
+   const all=events(writes[0].data!);
+   assert.deepEqual(all.map(e=>text(e,'summary')),['W','Early']);
+   assert.deepEqual(all[0].getAllProperties('exdate').flatMap(p=>p.getValues().map(String)),['2030-01-08T10:00:00Z']);
+  });
+
+  test('ends an all-day series on the day before',async()=> {
+   const data=ics(vevent('UID:a','DTSTART;VALUE=DATE:20300101','DTEND;VALUE=DATE:20300102','SUMMARY:A','RRULE:FREQ=DAILY'));
+   const {r,writes}=await ended(data,'2030-01-05T00:00:00Z');
+   assert.equal(r.isError,false);
+   assert.equal(text(only(writes[0].data!),'rrule'),'FREQ=DAILY;UNTIL=20300104');
+  });
+
+  test.each([
+   ['the first occurrence',week(),'2030-01-01T10:00:00Z'],
+   ['a time the series does not generate',week(),'2030-01-16T10:00:00Z'],
+   ['an invitation',week('ATTENDEE:mailto:a@example.test'),AT],
+   ['a one-off event',ics(timed('p','20300101T100000Z','20300101T110000Z')),AT],
+  ] as const)('refuses %s and writes nothing',async(_name,data,at)=> {
+   const {r,writes}=await ended(data,at);
+   assert.equal(r.isError,true);
+   assert.deepEqual(writes,[]);
+  });
+
+  test('needs an occurrence, and a whole-series request cannot be combined with one',async()=> {
+   const t=await tools([obj('s.ics',week())]);
+   assert.equal((await t.call('delete_event',del(CAL+'s.ics',{scope:'thisAndFollowing',confirmEntireSeries:true}))).isError,true);
+   assert.equal((await t.call('delete_event',del(CAL+'s.ics',{scope:'thisAndFollowing'}))).isError,true);
+   assert.equal((await t.call('delete_event',del(CAL+'s.ics',{occurrence:AT,scope:'thisAndFollowing',confirmEntireSeries:true}))).isError,true);
+   assert.deepEqual(t.writes,[]);
+  });
+ });
+});
+
 describe('delete_event',()=> {
  test('deletes a one-off event, sending its version',async()=> {
   const {call,writes}=await tools([obj('plain.ics',ics(timed('p','20300101T100000Z','20300101T110000Z')))]);

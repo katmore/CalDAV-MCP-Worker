@@ -130,3 +130,98 @@ export function editOccurrence(root: ICAL.Component, occurrence: string, changes
   stamp(override);
   return root.toString();
 }
+
+// The last moment the old series keeps when it is cut before `at`, in the form its DTSTART needs:
+// a date for all-day series, UTC for zoned ones, floating for floating ones.
+function untilBefore(dtstart: ICAL.Time, at: ICAL.Time) {
+  if (dtstart.isDate) { const day = at.clone(); day.adjust(-1, 0, 0, 0); return day; }
+  if (dtstart.zone.tzid === 'floating') { const moment = at.clone(); moment.adjust(0, 0, 0, -1); return moment; }
+  return ICAL.Time.fromJSDate(new Date(at.toJSDate().getTime() - 1000), true);
+}
+
+// Cuts the series in `root` just before the occurrence. `root` is left holding only what comes
+// before it (UNTIL set, later exclusions and edited copies removed). Returns the master of a
+// series that continues from the occurrence, with the later exclusions, plus the edited copies
+// that belong to it.
+function cutBefore(root: ICAL.Component, occurrence: string) {
+  const { master, overrides } = splitSeries(root);
+  if (master.hasProperty('rdate') || master.hasProperty('exrule')) throw new RangeError('Series with extra dates or exclusion rules cannot be split');
+  const at = findOccurrence(master, occurrence);
+  const first = new ICAL.Event(master).iterator().next();
+  if (!first || first.compare(at) >= 0) throw new RangeError('That is the first occurrence of the series; use a whole-series tool');
+  const dtstart = master.getFirstPropertyValue('dtstart') as ICAL.Time;
+  const recur = master.getFirstPropertyValue('rrule') as ICAL.Recur;
+  const rest = new ICAL.Component(structuredClone(master.toJSON()));
+
+  const kept: ICAL.Time[] = [], later: ICAL.Time[] = [];
+  for (const property of master.getAllProperties('exdate')) {
+    for (const value of property.getValues() as ICAL.Time[]) (value.compare(at) < 0 ? kept : later).push(value);
+  }
+  master.removeAllProperties('exdate');
+  rest.removeAllProperties('exdate');
+  for (const value of kept) setTime(master, 'exdate', value, true);
+  for (const value of later) setTime(rest, 'exdate', value, true);
+
+  const rule = { ...recur.toJSON() } as Record<string, unknown>;
+  delete rule.count;
+  rule.until = untilBefore(dtstart, at);
+  master.updatePropertyWithValue('rrule', ICAL.Recur.fromData(rule));
+  if (recur.count) {
+    // COUNT counts occurrences from the series start, so the rest keeps what is left of it.
+    let before = 0;
+    const rule = recur.iterator(dtstart);
+    let next: ICAL.Time | null;
+    while ((next = rule.next()) && next.compare(at) < 0) before++;
+    rest.updatePropertyWithValue('rrule', ICAL.Recur.fromData({ ...recur.toJSON(), count: recur.count - before }));
+  }
+
+  const atMs = at.toJSDate().getTime();
+  const moved = overrides.filter(e => startOf(e) >= atMs);
+  for (const override of moved) root.removeSubcomponent(override);
+  stamp(master);
+  return { at, rest, moved, movedExclusions: later.length > 0 };
+}
+
+// Cancels the occurrence and every later one by ending the series just before it.
+export function endSeriesBefore(root: ICAL.Component, occurrence: string) {
+  cutBefore(root, occurrence);
+  return root.toString();
+}
+
+// Changes the occurrence and every later one. The old series ends just before the occurrence
+// and a new series (a new resource, uid `uid`) continues from it with the changes. Only the
+// time of day may change, because moving to another day would break the repeat rule.
+// Returns the text of both resources.
+export function splitSeriesAt(root: ICAL.Component, occurrence: string, changes: OccurrenceChanges, uid: string) {
+  if (Object.values(changes).every(v => v === undefined)) throw new RangeError('Nothing to change');
+  const { at, rest, moved, movedExclusions } = cutBefore(root, occurrence);
+  if (at.isDate) throw new RangeError('All-day edits refused');
+  const { title, start, end, location, description } = changes;
+  if ((start !== undefined || end !== undefined) && (rest.hasProperty('duration') || moved.length || movedExclusions)) {
+    throw new RangeError('Time changes are refused for a series with a duration, edited occurrences or cancelled dates after this one');
+  }
+  const length = new ICAL.Event(rest).duration;
+  const first = start === undefined ? at.clone() : ICAL.Time.fromJSDate(new Date(start), true).convertToZone(at.zone);
+  if (first.year !== at.year || first.month !== at.month || first.day !== at.day) throw new RangeError('Only the time of day can change for this and following occurrences');
+  let last: ICAL.Time;
+  if (end === undefined) { last = first.clone(); last.addDuration(length); }
+  else last = ICAL.Time.fromJSDate(new Date(end), true).convertToZone(at.zone);
+  if (last.compare(first) <= 0) throw new RangeError('End must be after start');
+  setTime(rest, 'dtstart', first);
+  setTime(rest, 'dtend', last);
+  rest.updatePropertyWithValue('uid', uid);
+  if (title !== undefined) rest.updatePropertyWithValue('summary', title);
+  if (location !== undefined) rest.updatePropertyWithValue('location', location);
+  if (description !== undefined) rest.updatePropertyWithValue('description', description);
+  rest.updatePropertyWithValue('sequence', 0);
+  stamp(rest);
+
+  const created = new ICAL.Component(structuredClone(root.toJSON()));
+  for (const event of created.getAllSubcomponents('vevent')) created.removeSubcomponent(event);
+  created.addSubcomponent(rest);
+  for (const override of moved) {
+    override.updatePropertyWithValue('uid', uid);
+    created.addSubcomponent(override);
+  }
+  return { current: root.toString(), created: created.toString() };
+}
