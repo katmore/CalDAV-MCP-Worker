@@ -435,6 +435,127 @@ describe('update_event',()=> {
  });
 });
 
+describe('update_event on one occurrence of a series',()=> {
+ const WEEKLY=timed('w','20300101T100000Z','20300101T110000Z','RRULE:FREQ=WEEKLY','LOCATION:Hall','DESCRIPTION:Keep','BEGIN:VALARM','ACTION:DISPLAY','TRIGGER:-PT10M','DESCRIPTION:Alarm','END:VALARM');
+ const LA=ics('BEGIN:VTIMEZONE','TZID:America/Los_Angeles','BEGIN:DAYLIGHT','TZOFFSETFROM:-0800','TZOFFSETTO:-0700','TZNAME:PDT','DTSTART:19700308T020000','RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU','END:DAYLIGHT','BEGIN:STANDARD','TZOFFSETFROM:-0700','TZOFFSETTO:-0800','TZNAME:PST','DTSTART:19701101T020000','RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU','END:STANDARD','END:VTIMEZONE',
+  vevent('UID:z','DTSTART;TZID=America/Los_Angeles:20301026T090000','DTEND;TZID=America/Los_Angeles:20301026T100000','SUMMARY:Swap','RRULE:FREQ=WEEKLY'));
+ const OVERRIDE=vevent('UID:w','RECURRENCE-ID:20300108T100000Z','DTSTART:20300108T120000Z','DTEND:20300108T130000Z','SUMMARY:Moved','SEQUENCE:4');
+ const run=async(data:string,args:Record<string,unknown>,etag='"1"')=> {
+  const t=await tools([obj('s.ics',data,etag)]);
+  return {...t,r:await t.call('update_event',edit(CAL+'s.ics',{title:undefined,occurrence:'2030-01-08T10:00:00Z',...args}))};
+ };
+ const events=(data:string)=>parse(data).getAllSubcomponents('vevent');
+
+ test('adds an override for the occurrence and leaves the series as it was',async()=> {
+  const {r,writes}=await run(ics(WEEKLY),{title:'One-off name'});
+  assert.deepEqual(r.body,{updated:true,resourceId:CAL+'s.ics',occurrence:'2030-01-08T10:00:00Z'});
+  assert.equal(writes.length,1);
+  assert.equal(writes[0].etag,'"1"');
+  const [master,override]=events(writes[0].data!);
+  assert.equal(text(master,'summary'),'Test');
+  assert.equal(text(master,'rrule'),'FREQ=WEEKLY');
+  assert.equal(master.hasProperty('recurrence-id'),false);
+  assert.equal(master.hasProperty('exdate'),false);
+  assert.equal(text(override,'uid'),'w');
+  assert.equal(text(override,'recurrence-id'),'2030-01-08T10:00:00Z');
+  assert.equal(text(override,'dtstart'),'2030-01-08T10:00:00Z');
+  assert.equal(text(override,'dtend'),'2030-01-08T11:00:00Z');
+  assert.equal(text(override,'summary'),'One-off name');
+  assert.equal(text(override,'location'),'Hall');
+  assert.equal(override.hasProperty('rrule'),false);
+  assert.equal(override.getAllSubcomponents('valarm').length,1);
+  assert.equal(text(override,'sequence'),'1');
+ });
+
+ test('changes time, location and description, and moving the start alone keeps the length',async()=> {
+  const a=await run(ics(WEEKLY),{start:'2030-01-08T14:00:00Z',location:'Room 2',description:'New'});
+  const o=events(a.writes[0].data!)[1];
+  assert.equal(text(o,'dtstart'),'2030-01-08T14:00:00Z');
+  assert.equal(text(o,'dtend'),'2030-01-08T15:00:00Z');
+  assert.equal(text(o,'location'),'Room 2');
+  assert.equal(text(o,'description'),'New');
+  const b=await run(ics(WEEKLY),{end:'2030-01-08T10:30:00Z'});
+  assert.equal(text(events(b.writes[0].data!)[1],'dtend'),'2030-01-08T10:30:00Z');
+ });
+
+ test('updates an occurrence that already has an override instead of adding another',async()=> {
+  const data=ics(WEEKLY,OVERRIDE);
+  const {r,writes}=await run(data,{title:'Renamed again'});
+  assert.equal(r.isError,false);
+  const all=events(writes[0].data!);
+  assert.equal(all.length,2);
+  assert.equal(text(all[1],'summary'),'Renamed again');
+  assert.equal(text(all[1],'dtstart'),'2030-01-08T12:00:00Z');
+  assert.equal(text(all[1],'sequence'),'5');
+  assert.equal(text(all[0],'summary'),'Test');
+ });
+
+ test('leaves other overrides untouched',async()=> {
+  const other=vevent('UID:w','RECURRENCE-ID:20300115T100000Z','DTSTART:20300115T100000Z','DTEND:20300115T110000Z','SUMMARY:Other');
+  const {writes}=await run(ics(WEEKLY,OVERRIDE,other),{title:'Changed'});
+  const all=events(writes[0].data!);
+  assert.equal(all.length,3);
+  assert.equal(text(all[2],'summary'),'Other');
+  assert.equal(text(all[1],'summary'),'Changed');
+ });
+
+ test('writes a zoned series occurrence in its own zone across the November daylight-saving change',async()=> {
+  // 2030-11-09 09:00 PST = 17:00Z
+  const {r,writes}=await run(LA,{title:'Moved swap',occurrence:'2030-11-09T17:00:00Z'});
+  assert.equal(r.isError,false);
+  const o=events(writes[0].data!)[1];
+  assert.equal(o.getFirstProperty('recurrence-id')!.getParameter('tzid'),'America/Los_Angeles');
+  assert.equal(String(o.getFirstPropertyValue('recurrence-id')),'2030-11-09T09:00:00');
+  assert.equal(o.getFirstProperty('dtstart')!.getParameter('tzid'),'America/Los_Angeles');
+  assert.equal(String(o.getFirstPropertyValue('dtend')),'2030-11-09T10:00:00');
+  assert.equal((await run(LA,{title:'x',occurrence:'2030-11-09T16:00:00Z'})).r.isError,true);
+ });
+
+ test('turns a duration-based series into an explicit end for the override',async()=> {
+  const data=ics(vevent('UID:d','DTSTART:20300101T100000Z','DURATION:PT2H','SUMMARY:D','RRULE:FREQ=WEEKLY'));
+  const {r,writes}=await run(data,{title:'Named'});
+  assert.equal(r.isError,false);
+  const o=events(writes[0].data!)[1];
+  assert.equal(o.hasProperty('duration'),false);
+  assert.equal(text(o,'dtend'),'2030-01-08T12:00:00Z');
+  assert.equal((await run(data,{start:'2030-01-08T11:00:00Z'})).r.isError,true);
+ });
+
+ test.each([
+  ['a time the series does not generate',ics(WEEKLY),{occurrence:'2030-01-09T10:00:00Z'}],
+  ['a cancelled occurrence',ics(timed('w','20300101T100000Z','20300101T110000Z','RRULE:FREQ=WEEKLY','EXDATE:20300108T100000Z')),{}],
+  ['an end before the start',ics(WEEKLY),{end:'2030-01-08T09:00:00Z'}],
+  ['a start past the end',ics(WEEKLY),{start:'2030-01-08T12:00:00Z',end:'2030-01-08T11:00:00Z'}],
+  ['an edit that changes nothing',ics(WEEKLY),{title:undefined}],
+  ['a one-off event',ics(timed('p','20300101T100000Z','20300101T110000Z')),{}],
+  ['an all-day series',ics(vevent('UID:a','DTSTART;VALUE=DATE:20300101','DTEND;VALUE=DATE:20300102','SUMMARY:A','RRULE:FREQ=DAILY')),{occurrence:'2030-01-03T00:00:00Z'}],
+  ['an invitation',ics(timed('i','20300101T100000Z','20300101T110000Z','RRULE:FREQ=WEEKLY','ATTENDEE:mailto:a@example.test')),{}],
+ ] as const)('refuses %s',async(_name,data,args)=> {
+  const {r,writes}=await run(data,{title:'Changed',...args});
+  assert.equal(r.isError,true);
+  assert.deepEqual(writes,[]);
+ });
+
+ test('refuses when the event changed since it was read',async()=> {
+  const {r,writes}=await run(ics(WEEKLY),{title:'Changed'},'"2"');
+  assert.equal(r.isError,true);
+  assert.deepEqual(writes,[]);
+ });
+
+ test('reports a refused save as a failure',async()=> {
+  const t=await tools([obj('s.ics',ics(WEEKLY))],ENV,OWNER,{writeStatus:412});
+  const r=await t.call('update_event',edit(CAL+'s.ics',{occurrence:'2030-01-08T10:00:00Z'}));
+  assert.equal(r.isError,true);
+  assert.equal(r.body.updated,undefined);
+ });
+
+ test('still refuses to edit a whole series without an occurrence',async()=> {
+  const {call,writes}=await tools([obj('s.ics',ics(WEEKLY))]);
+  assert.equal((await call('update_event',edit(CAL+'s.ics'))).isError,true);
+  assert.deepEqual(writes,[]);
+ });
+});
+
 describe('delete_event',()=> {
  test('deletes a one-off event, sending its version',async()=> {
   const {call,writes}=await tools([obj('plain.ics',ics(timed('p','20300101T100000Z','20300101T110000Z')))]);

@@ -31,7 +31,7 @@ replaced by fakes, and every secret has a test-only value in
 | File | Covers |
 | --- | --- |
 | `test/safety.test.ts` | The owner check; the calendar boundary, one test per rule (other hosts, ports, `http`, credentials, query strings, fragments, `..` and encoded slashes, nested folders, non-`.ics` files, look-alike sibling folders); refused saves never counting as success; what counts as a repeating event; timezones staying inside the event that defines them |
-| `test/calendar.test.ts` | All six calendar tools against a fake calendar server: what is written and where, the version sent with each change, refused saves, edits keeping alarms and unknown fields, the refusal rules for repeating events, cancelling a single occurrence, all-day events and invitations, the `capped` flag, the 90-day, 250-event and 500-occurrence limits, input validation (including that deletes need `confirm: "DELETE"`), the read-only and destructive markers on each tool, and error messages that hide internal details |
+| `test/calendar.test.ts` | All six calendar tools against a fake calendar server: what is written and where, the version sent with each change, refused saves, edits keeping alarms and unknown fields, the refusal rules for repeating events, cancelling or editing a single occurrence, all-day events and invitations, the `capped` flag, the 90-day, 250-event and 500-occurrence limits, input validation (including that deletes need `confirm: "DELETE"`), the read-only and destructive markers on each tool, and error messages that hide internal details |
 | `test/oauth-utils.test.ts` | Sign-in building blocks: CSRF tokens, sign-in state kept in a signed, expiring cookie tied to the browser that started it (forged, edited, expired and mismatched cookies are refused, and nothing is written to KV), the signed "approved apps" cookie (including forged and foreign cookies), HTML escaping and link filtering on the approval page, and the GitHub token exchange |
 | `test/github-handler.test.ts` | The sign-in pages: approval, the GitHub callback, refusing any GitHub account but the owner, failed GitHub responses, replayed or cross-browser callbacks, and hidden internal errors |
 | `test/transport.test.ts` | The CalDAV network boundary, using the real CalDAV client against a fake network: `CALDAV_URL` must be https; discovery, server-listed addresses and every redirect step stay on https and on trusted hosts; the network is never left to follow redirects unchecked; refusals are reported without addresses or credentials; create, update and delete still send their version checks |
@@ -158,8 +158,9 @@ new version, repeat it with the prompts in the README's
 - Repeating events, timezones and all-day events are tested with sample data
   only. Cancelling one occurrence of a weekly iPhone-made event in a saved
   timezone, after the November daylight-saving change, was checked live on
-  iCloud and in the iPhone Calendar app. Series with edited occurrences, and
-  series from other apps, were not. Treat results
+  iCloud and in the iPhone Calendar app. Editing one occurrence has not been
+  checked live yet, nor have series with edited occurrences or series from
+  other apps. Treat results
   flagged `capped` as incomplete.
-- Editing repeating events, all-day events and invitations is refused on
-  purpose.
+- Editing a whole repeating series, all-day events and invitations is refused
+  on purpose.

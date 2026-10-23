@@ -3,7 +3,7 @@ import { createDAVClient } from 'tsdav';
 import ICAL from 'ical.js';
 import { z } from 'zod';
 import { ConfigurationError, caldavUrl, guardedFetch, trustedHosts } from './transport';
-import { assertResource, checkWrite, isAllowedLogin, cancelOccurrence, isSeries, prepareCalendar, sameResource, creationResult } from './safety';
+import { assertResource, checkWrite, isAllowedLogin, cancelOccurrence, editOccurrence, isSeries, prepareCalendar, sameResource, creationResult } from './safety';
 
 export type Props = { login: string; name: string; email: string };
 export type CalendarEnv = { CALDAV_USERNAME: string; CALDAV_PASSWORD: string; ALLOWED_GITHUB_LOGIN: string; CALDAV_URL: string; CALDAV_TRUSTED_HOSTS?: string };
@@ -191,19 +191,26 @@ export class CalendarServer {
       } catch (e) { return failure(e); }
     });
 
-    this.server.registerTool('update_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Update a nonrecurring VEVENT resource. Refuses any recurring series or recurrence exception to prevent accidental edits.', inputSchema: z.object({
+    this.server.registerTool('update_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Update a nonrecurring VEVENT resource. Refuses a whole recurring series. To change one occurrence of a series, pass occurrence (its start, as listed by list_events); only that occurrence changes. Moving only start keeps the occurrence length.', inputSchema: z.object({
       calendarId: z.string(), resourceId: z.string(), etag: z.string().min(1),
+      occurrence: z.string().datetime({ offset: true }).optional(),
       title: z.string().min(1).max(500).optional(),
       start: z.string().datetime({ offset: true }).optional(),
       end: z.string().datetime({ offset: true }).optional(),
       location: z.string().optional(),
       description: z.string().optional(),
-    }) }, async ({ calendarId, resourceId, etag, title, start, end, location, description }) => {
+    }) }, async ({ calendarId, resourceId, etag, occurrence, title, start, end, location, description }) => {
       try {
         const client = await dav();
         const { object } = await getObject(client, calendarId, resourceId);
         const root = prepareCalendar(object.data);
         const events = root.getAllSubcomponents('vevent');
+        if (occurrence !== undefined) {
+          if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
+          if (events.some(e => e.hasProperty('attendee') || e.hasProperty('organizer'))) throw new RangeError('Invitation edits refused');
+          await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: editOccurrence(root, occurrence, { title, start, end, location, description }) } }));
+          return result({ updated: true, resourceId, occurrence });
+        }
         if (events.length !== 1 || isSeries(events)) throw new RangeError('Recurring event edit refused');
         const ev = events[0];
         if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
