@@ -73,8 +73,8 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
 | `list_events` | List events in one calendar over a date range (max 90 days) |
 | `get_event` | Read one event with all its details |
 | `create_event` | Create a one-off (non-repeating) event with a start and end time |
-| `update_event` | Change the title, times, location or description of a one-off event |
-| `delete_event` | Delete an event |
+| `update_event` | Change the title, times, location or description of a one-off event, or of one occurrence (or this and following occurrences) of a repeating event |
+| `delete_event` | Delete an event, cancel one occurrence of a repeating event, or end a repeating event from one occurrence on |
 
 ### Safety rules and limits
 
@@ -321,11 +321,26 @@ To check your assistant too, paste these prompts into it:
    unchanged (see [Safety rules and limits](#safety-rules-and-limits)).
 
    ```
-   Change the title of my repeating <event name> event.
+   Change the title of every occurrence of my repeating <event name> event.
    ```
 
    ```
    Change the time of the <event name> invitation.
+   ```
+
+7. Optionally, try repeating events on a throwaway weekly event you made in
+   your calendar app. Check the result in the app, not only in the assistant.
+
+   ```
+   Cancel just the <date> occurrence of my repeating <event name> event.
+   ```
+
+   ```
+   Change the <date> occurrence of <event name> to start an hour later.
+   ```
+
+   ```
+   Starting <date>, change <event name> to start an hour later every week.
    ```
 
 ### Troubleshooting

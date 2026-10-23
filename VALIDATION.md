@@ -59,6 +59,12 @@ safety rule breaking, each rule was broken on purpose and a test had to fail. Ea
 - an edit sent without the event's version, dropping the new title, or not
   increasing the event's sequence number
 - events with excluded dates no longer treated as repeating
+- an edited occurrence changing the whole series, or a second copy added for an
+  occurrence that already had one
+- a split series keeping cancelled dates or edited occurrences on the wrong
+  side, or a counted series not divided between the two halves
+- the new half of a split series left behind when the old half can't be shortened
+- a moved time keeping the old timezone on a UTC value
 - event lists no longer sorted
 - error messages revealing internal details
 - one event's timezone affecting others
@@ -161,7 +167,9 @@ new version, repeat it with the prompts in the README's
   iCloud and in the iPhone Calendar app. Renaming one occurrence and moving
   another, on the same kind of event, was checked the same way. Splitting a
   series ("this and following") and ending a series early were checked the same
-  way. Series from other apps were not. Treat results
-  flagged `capped` as incomplete.
+  way. Series from other apps were not, and neither was the clean-up when
+  the old half of a split series can't be shortened (that is tested with a fake
+  server only). Treat results flagged `capped` as incomplete.
 - Editing a whole repeating series, all-day events and invitations is refused
-  on purpose.
+  on purpose. Splitting a series is refused at its first occurrence and for
+  series with extra dates or exclusion rules.
