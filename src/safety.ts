@@ -65,10 +65,13 @@ function findOccurrence(master: ICAL.Component, occurrence: string) {
   throw new RangeError('No such occurrence in this series');
 }
 
-// ical.js writes the local time but not its zone; without TZID the value would read as floating.
-function setTime(component: ICAL.Component, name: string, time: ICAL.Time, add = false) {
+// Sets a date-time property, keeping TZID in step with the value. ical.js writes the local
+// time but not its zone, and leaves an old TZID on a value that is now UTC; either way the
+// result would be read in the wrong zone or be invalid.
+export function setTime(component: ICAL.Component, name: string, time: ICAL.Time, add = false) {
   const property = add ? component.addPropertyWithValue(name, time.clone()) : component.updatePropertyWithValue(name, time.clone());
   if (!time.isDate && time.zone.tzid !== 'UTC' && time.zone.tzid !== 'floating') property.setParameter('tzid', time.zone.tzid);
+  else property.removeParameter('tzid');
 }
 
 const stamp = (e: ICAL.Component) => {
@@ -118,11 +121,11 @@ export function editOccurrence(root: ICAL.Component, occurrence: string, changes
   if (description !== undefined) override.updatePropertyWithValue('description', description);
   if (start !== undefined) {
     const moved = ICAL.Time.fromJSDate(new Date(start), true);
-    override.updatePropertyWithValue('dtstart', moved);
+    setTime(override, 'dtstart', moved);
     // Moving the start alone keeps the occurrence's length.
-    if (end === undefined) { const e = moved.clone(); e.addDuration(length); override.updatePropertyWithValue('dtend', e); }
+    if (end === undefined) { const e = moved.clone(); e.addDuration(length); setTime(override, 'dtend', e); }
   }
-  if (end !== undefined) override.updatePropertyWithValue('dtend', ICAL.Time.fromJSDate(new Date(end), true));
+  if (end !== undefined) setTime(override, 'dtend', ICAL.Time.fromJSDate(new Date(end), true));
   if ((override.getFirstPropertyValue('dtend') as ICAL.Time).compare(override.getFirstPropertyValue('dtstart') as ICAL.Time) <= 0) throw new RangeError('End must be after start');
   stamp(override);
   return root.toString();

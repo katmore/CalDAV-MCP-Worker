@@ -435,6 +435,18 @@ describe('update_event',()=> {
  });
 });
 
+describe('update_event on a one-off event in a saved timezone',()=> {
+ test('writes moved times in UTC without the old TZID',async()=> {
+  const data=ics(vevent('UID:z','DTSTART;TZID=America/Los_Angeles:20301026T090000','DTEND;TZID=America/Los_Angeles:20301026T100000','SUMMARY:Z'));
+  const {call,writes}=await tools([obj('z.ics',data)]);
+  const r=await call('update_event',edit(CAL+'z.ics',{start:'2030-10-26T18:00:00Z',end:'2030-10-26T19:00:00Z'}));
+  assert.equal(r.isError,false);
+  const ev=only(writes[0].data!);
+  assert.equal(ev.getFirstProperty('dtstart')!.toICALString(),'DTSTART:20301026T180000Z');
+  assert.equal(ev.getFirstProperty('dtend')!.toICALString(),'DTEND:20301026T190000Z');
+ });
+});
+
 describe('update_event on one occurrence of a series',()=> {
  const WEEKLY=timed('w','20300101T100000Z','20300101T110000Z','RRULE:FREQ=WEEKLY','LOCATION:Hall','DESCRIPTION:Keep','BEGIN:VALARM','ACTION:DISPLAY','TRIGGER:-PT10M','DESCRIPTION:Alarm','END:VALARM');
  const LA=ics('BEGIN:VTIMEZONE','TZID:America/Los_Angeles','BEGIN:DAYLIGHT','TZOFFSETFROM:-0800','TZOFFSETTO:-0700','TZNAME:PDT','DTSTART:19700308T020000','RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU','END:DAYLIGHT','BEGIN:STANDARD','TZOFFSETFROM:-0700','TZOFFSETTO:-0800','TZNAME:PST','DTSTART:19701101T020000','RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU','END:STANDARD','END:VTIMEZONE',
@@ -509,6 +521,16 @@ describe('update_event on one occurrence of a series',()=> {
   assert.equal(o.getFirstProperty('dtstart')!.getParameter('tzid'),'America/Los_Angeles');
   assert.equal(String(o.getFirstPropertyValue('dtend')),'2030-11-09T10:00:00');
   assert.equal((await run(LA,{title:'x',occurrence:'2030-11-09T16:00:00Z'})).r.isError,true);
+ });
+
+ test('a moved start or end is written in UTC without the series zone',async()=> {
+  const {writes}=await run(LA,{start:'2030-11-09T19:00:00Z',occurrence:'2030-11-09T17:00:00Z'});
+  const o=events(writes[0].data!)[1];
+  assert.equal(o.getFirstProperty('dtstart')!.toICALString(),'DTSTART:20301109T190000Z');
+  assert.equal(o.getFirstProperty('dtend')!.toICALString(),'DTEND:20301109T200000Z');
+  assert.equal(o.getFirstProperty('recurrence-id')!.getParameter('tzid'),'America/Los_Angeles');
+  const e=await run(LA,{end:'2030-11-09T19:30:00Z',occurrence:'2030-11-09T17:00:00Z'});
+  assert.equal(events(e.writes[0].data!)[1].getFirstProperty('dtend')!.toICALString(),'DTEND:20301109T193000Z');
  });
 
  test('turns a duration-based series into an explicit end for the override',async()=> {

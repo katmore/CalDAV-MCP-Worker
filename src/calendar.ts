@@ -3,7 +3,7 @@ import { createDAVClient } from 'tsdav';
 import ICAL from 'ical.js';
 import { z } from 'zod';
 import { ConfigurationError, caldavUrl, guardedFetch, trustedHosts } from './transport';
-import { assertResource, checkWrite, isAllowedLogin, cancelOccurrence, editOccurrence, isSeries, prepareCalendar, sameResource, creationResult } from './safety';
+import { assertResource, checkWrite, isAllowedLogin, cancelOccurrence, editOccurrence, isSeries, setTime, prepareCalendar, sameResource, creationResult } from './safety';
 
 export type Props = { login: string; name: string; email: string };
 export type CalendarEnv = { CALDAV_USERNAME: string; CALDAV_PASSWORD: string; ALLOWED_GITHUB_LOGIN: string; CALDAV_URL: string; CALDAV_TRUSTED_HOSTS?: string };
@@ -219,8 +219,8 @@ export class CalendarServer {
         ev.updatePropertyWithValue('dtstamp', ICAL.Time.fromJSDate(new Date(), true));
         ev.updatePropertyWithValue('sequence', Number(ev.getFirstPropertyValue('sequence') || 0) + 1);
         if (title !== undefined) ev.updatePropertyWithValue('summary', title);
-        if (start !== undefined) ev.updatePropertyWithValue('dtstart', ICAL.Time.fromJSDate(new Date(start), true));
-        if (end !== undefined) ev.updatePropertyWithValue('dtend', ICAL.Time.fromJSDate(new Date(end), true));
+        if (start !== undefined) setTime(ev, 'dtstart', ICAL.Time.fromJSDate(new Date(start), true));
+        if (end !== undefined) setTime(ev, 'dtend', ICAL.Time.fromJSDate(new Date(end), true));
         if (location !== undefined) ev.updatePropertyWithValue('location', location);
         if (description !== undefined) ev.updatePropertyWithValue('description', description);
         const st = ev.getFirstPropertyValue('dtstart') as ICAL.Time;
