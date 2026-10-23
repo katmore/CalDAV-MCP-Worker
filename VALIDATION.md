@@ -158,9 +158,9 @@ new version, repeat it with the prompts in the README's
 - Repeating events, timezones and all-day events are tested with sample data
   only. Cancelling one occurrence of a weekly iPhone-made event in a saved
   timezone, after the November daylight-saving change, was checked live on
-  iCloud and in the iPhone Calendar app. Editing one occurrence has not been
-  checked live yet, nor have series with edited occurrences or series from
-  other apps. Treat results
+  iCloud and in the iPhone Calendar app. Renaming one occurrence and moving
+  another, on the same kind of event, was checked the same way. Series from
+  other apps were not. Treat results
   flagged `capped` as incomplete.
 - Editing a whole repeating series, all-day events and invitations is refused
   on purpose.
