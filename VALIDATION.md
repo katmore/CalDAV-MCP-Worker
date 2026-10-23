@@ -172,8 +172,10 @@ new version, repeat it with the prompts in the README's
   Checked live: cancelling one occurrence, renaming one, moving one, splitting a
   series ("this and following") and ending a series early, all on weekly events
   made in the iPhone Calendar app, in a saved timezone, across the November
-  daylight-saving change. Not checked live: creating events (all-day or
-  repeating, with a generated timezone), editing a whole series, moving or
-  changing the rule of a series, all-day events, events with guests, series
-  made by other apps, and the clean-up when the old half of a split series can't
-  be shortened (fake server only). Treat results flagged `capped` as incomplete.
+  daylight-saving change. Also checked live: creating a repeating event with a
+  generated timezone, creating an all-day event, editing a whole series (new
+  title, location and time of day) and extending an all-day event, all
+  confirmed in the iPhone Calendar app. Not checked live: moving a series to
+  another day or changing its rule, events with guests, series made by other
+  apps, and the clean-up when the old half of a split series can't be shortened
+  (fake server only). Treat results flagged `capped` as incomplete.
