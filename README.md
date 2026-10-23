@@ -70,15 +70,29 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
 | Tool | What it does |
 | --- | --- |
 | `list_calendars` | List the calendars on the connected CalDAV account |
-| `list_events` | List events in one calendar over a date range (max 90 days) |
+| `list_events` | List events in one calendar over a date range (max 90 days), with repeating events expanded |
 | `get_event` | Read one event with all its details |
-| `create_event` | Create a one-off (non-repeating) event with a start and end time |
-| `update_event` | Change the title, times, location or description of a one-off event, or of one occurrence (or this and following occurrences) of a repeating event |
+| `create_event` | Create a timed or all-day event, optionally repeating (`rrule`) and in a named `timezone` |
+| `update_event` | Change an event's title, start, end, location, description or repeat rule. For a repeating event, change one occurrence, an occurrence and all later ones, or the whole series |
 | `delete_event` | Delete an event, cancel one occurrence of a repeating event, or end a repeating event from one occurrence on |
 
-### Safety rules and limits
+Dates for all-day events are plain `YYYY-MM-DD`, and an end date is the last
+day included. Times for timed events carry an offset, such as
+`2030-01-05T09:00:00-08:00`.
 
-The server enforces these no matter what the assistant asks for.
+### Rules and limits
+
+Nothing is off the table. A few changes need the assistant to say so
+explicitly, so it has to check with you first:
+
+- **`confirm: "DELETE"`** on every delete.
+- **`confirmEntireSeries: true`** to delete a whole repeating series.
+- **`scope`** to pick what a change to a repeating event applies to:
+  `occurrence`, `thisAndFollowing` or `entireSeries`.
+- **`confirmGuests: "NOTIFY GUESTS"`** to change or delete an event that has
+  guests, since your calendar server may email them.
+
+A few things the server does regardless:
 
 - **Only your real calendars.** Every request is checked against the calendars
   on your account at that moment, so the assistant can't act on a calendar or
@@ -87,27 +101,23 @@ The server enforces these no matter what the assistant asks for.
   must read it first. If the event changed in the meantime (say, you edited it
   on your phone), the change is refused instead of overwriting yours. Creating
   an event never replaces an existing one.
-- **What can't be edited:** a whole repeating series, all-day events and
-  invitations. One occurrence of a repeating event can be edited (title, time,
-  location or description); the rest of the series is left alone. The
-  assistant can also change "this and following": the series is split in two at
-  that occurrence, and only the time of day can change.
-  Events defined by a duration rather than an end time can't have their times
-  changed. When you edit an event, details the server doesn't handle (such as
-  alarms) are left untouched.
-- **What can't be deleted:** invitations. Deleting a repeating event removes
-  the whole series, so the assistant has to ask for whole-series deletion
-  explicitly. A single occurrence can be cancelled on its own (the rest of the
-  series stays), but not if it was edited separately. "This and following" ends
-  the series just before that occurrence.
-- **Repeating events may be incomplete.** A listing that might be missing
-  occurrences, or has events without a saved timezone, comes back with
+- **Repeating events.**
+  - Cancelling or editing one occurrence, or this and all following ones,
+    works on events from any app. Splitting a series creates a second
+    event for the later part; if the first can't be shortened, the second is
+    removed again.
+  - Moving a series that repeats on fixed days (for example every Tuesday) to
+    another day needs a new `rrule`, so the assistant says which days it
+    should repeat on.
+  - A repeating event created without a timezone repeats in UTC and shifts by
+    an hour across daylight saving, so assistants are told to pass one.
+- **Repeating events may be incomplete in listings.** A listing that might be
+  missing occurrences, or has events without a saved timezone, comes back with
   `capped: true`. Check repeating events against your calendar app.
 
 Your assistant is the one that asks before changing anything. `update_event`
 and `delete_event` are marked as destructive so assistants know to check with
-you first. `delete_event` also needs `confirm: "DELETE"`, which the assistant
-fills in itself.
+you first.
 
 ### Security notes
 
@@ -317,15 +327,12 @@ To check your assistant too, paste these prompts into it:
    Delete the "Connector test (edited)" event, then list that day's events to confirm it's gone.
    ```
 
-6. Optionally, check the safety rules. Both should fail and leave your calendar
-   unchanged (see [Safety rules and limits](#safety-rules-and-limits)).
+6. Optionally, check that the assistant asks before anything risky. It should
+   check with you first, not just go ahead (see
+   [Rules and limits](#rules-and-limits)).
 
    ```
-   Change the title of every occurrence of my repeating <event name> event.
-   ```
-
-   ```
-   Change the time of the <event name> invitation.
+   Delete my <event name> series.
    ```
 
 7. Optionally, try repeating events on a throwaway weekly event you made in
@@ -341,6 +348,10 @@ To check your assistant too, paste these prompts into it:
 
    ```
    Starting <date>, change <event name> to start an hour later every week.
+   ```
+
+   ```
+   Rename every <event name> to <new name>.
    ```
 
 ### Troubleshooting

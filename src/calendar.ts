@@ -3,7 +3,9 @@ import { createDAVClient } from 'tsdav';
 import ICAL from 'ical.js';
 import { z } from 'zod';
 import { ConfigurationError, caldavUrl, guardedFetch, trustedHosts } from './transport';
-import { assertResource, checkWrite, isAllowedLogin, cancelOccurrence, editOccurrence, endSeriesBefore, splitSeriesAt, isSeries, setTime, prepareCalendar, sameResource, creationResult } from './safety';
+import { assertResource, checkWrite, isAllowedLogin, isSeries, prepareCalendar, sameResource, creationResult } from './checks';
+import { cancelOccurrence, editOccurrence, editOneOff, editSeries, endSeriesBefore, isDateOnly, parseRule, setTime, splitSeriesAt } from './recurrence';
+import { isKnownZone, localTime, vtimezone } from './timezone';
 
 export type Props = { login: string; name: string; email: string };
 export type CalendarEnv = { CALDAV_USERNAME: string; CALDAV_PASSWORD: string; ALLOWED_GITHUB_LOGIN: string; CALDAV_URL: string; CALDAV_TRUSTED_HOSTS?: string };
@@ -157,16 +159,33 @@ export class CalendarServer {
       } catch (e) { return failure(e); }
     });
 
-    this.server.registerTool('create_event', { annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }, description: 'Create a single, nonrecurring timed appointment. Never create without the user explicitly asking for it.', inputSchema: z.object({
+    // A start or end: a date-time with an offset, or a YYYY-MM-DD date for an all-day event.
+    const when = z.union([z.string().datetime({ offset: true }), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)]);
+    const SCOPES = z.enum(['occurrence', 'thisAndFollowing', 'entireSeries']).default('occurrence');
+    const rrule = z.string().min(1).max(500).regex(/^[A-Za-z0-9=;,:+\-]+$/);
+    // Changing or deleting an event that has guests can send each of them an email, so it takes a deliberate extra confirmation.
+    const confirmGuests = z.literal('NOTIFY GUESTS').optional();
+    const guestsNeedConfirmation = (events: ICAL.Component[], confirmed: unknown) => {
+      if (!confirmed && events.some(e => e.hasProperty('attendee') || e.hasProperty('organizer'))) {
+        throw new RangeError('This event has guests and the change may email them; ask the user, then pass confirmGuests: "NOTIFY GUESTS"');
+      }
+    };
+
+    this.server.registerTool('create_event', { annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }, description: 'Create an event. Timed: start and end as date-times with an offset. All-day: start (and optionally end, the last day, inclusive) as YYYY-MM-DD dates. To make it repeat pass rrule, such as FREQ=WEEKLY;BYDAY=MO or FREQ=MONTHLY;BYDAY=1SA;COUNT=12. For a repeating timed event also pass timezone (an IANA name such as America/Los_Angeles) so it stays at the same local time across daylight saving. Never create without the user explicitly asking for it.', inputSchema: z.object({
       calendarId: z.string(),
       title: z.string().min(1).max(500),
-      start: z.string().datetime({ offset: true }),
-      end: z.string().datetime({ offset: true }),
+      start: when,
+      end: when.optional(),
+      timezone: z.string().min(1).max(100).optional(),
+      rrule: rrule.optional(),
       location: z.string().optional(),
       description: z.string().optional(),
-    }) }, async ({ calendarId, title, start, end, location, description }) => {
+    }) }, async ({ calendarId, title, start, end, timezone, rrule, location, description }) => {
       try {
-        if (new Date(end).getTime() <= new Date(start).getTime()) throw new RangeError('Invalid event interval');
+        const allDay = isDateOnly(start);
+        if (isDateOnly(end ?? start) !== allDay) throw new RangeError('Give both start and end as dates, or both as date-times');
+        if (!allDay && end === undefined) throw new RangeError('A timed event needs an end');
+        if (timezone !== undefined && !isKnownZone(timezone)) throw new RangeError('Unknown timezone');
         const client = await dav();
         const calendar = await lookupCalendar(client, calendarId);
         const root = new ICAL.Component(['vcalendar', [], []]);
@@ -177,99 +196,125 @@ export class CalendarServer {
         const uid = id + '@private-caldav-mcp';
         ev.addPropertyWithValue('uid', uid);
         ev.addPropertyWithValue('dtstamp', ICAL.Time.fromJSDate(new Date(), true));
-        ev.addPropertyWithValue('dtstart', ICAL.Time.fromJSDate(new Date(start), true));
-        ev.addPropertyWithValue('dtend', ICAL.Time.fromJSDate(new Date(end), true));
+        let first: ICAL.Time, last: ICAL.Time;
+        if (allDay) {
+          first = ICAL.Time.fromDateString(start);
+          last = ICAL.Time.fromDateString(end ?? start);
+          last.adjust(1, 0, 0, 0);
+          if (last.compare(first) <= 0) throw new RangeError('Invalid event interval');
+        } else {
+          if (new Date(end!).getTime() <= new Date(start).getTime()) throw new RangeError('Invalid event interval');
+          if (timezone && timezone !== 'UTC') {
+            const vt = vtimezone(timezone, new Date(start).getTime());
+            const zone = new ICAL.Timezone(vt);
+            root.addSubcomponent(vt);
+            first = localTime(timezone, new Date(start).getTime(), zone);
+            last = localTime(timezone, new Date(end!).getTime(), zone);
+          } else {
+            first = ICAL.Time.fromJSDate(new Date(start), true);
+            last = ICAL.Time.fromJSDate(new Date(end!), true);
+          }
+        }
+        setTime(ev, 'dtstart', first);
+        setTime(ev, 'dtend', last);
         ev.addPropertyWithValue('summary', title);
         if (location) ev.addPropertyWithValue('location', location);
         if (description) ev.addPropertyWithValue('description', description);
+        if (rrule) ev.addPropertyWithValue('rrule', parseRule(rrule));
         root.addSubcomponent(ev);
         const resourceId = resourceUrl(calendar.url, id);
         await checkWrite(await client.createCalendarObject({ calendar, filename: `${id}.ics`, iCalString: root.toString(), headers: { 'If-None-Match': '*' } }));
-        return result(await creationResult(uid, resourceId, async () => {
+        const created = await creationResult(uid, resourceId, async () => {
           const { object } = await getObject(client, calendarId, resourceId);
           return summarize(object);
-        }));
+        });
+        const drifts = rrule && !allDay && !timezone;
+        return result(drifts ? { ...created, note: 'No timezone was given, so this repeats in UTC and will shift by an hour across daylight saving.' } : created);
       } catch (e) { return failure(e); }
     });
 
-    this.server.registerTool('update_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Update a nonrecurring VEVENT resource. Refuses a whole recurring series. To change one occurrence of a series, pass occurrence (its start, as listed by list_events); only that occurrence changes. Moving only start keeps the occurrence length. With scope thisAndFollowing the change applies from that occurrence on: the series is split into two, only the time of day can change, and the result includes the new series as newResourceId.', inputSchema: z.object({
+    this.server.registerTool('update_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Update an event: title, start, end, location, description, and rrule (to change how it repeats, or to make a one-off repeat). Dates for all-day events are YYYY-MM-DD, and end is the last day. For a repeating event choose scope: occurrence (just the one in occurrence, its start as listed by list_events), thisAndFollowing (that occurrence and every later one), or entireSeries (the whole series; do not pass occurrence). Moving only start keeps the length. Changing an event that has guests can email them an update: ask the user first, then pass confirmGuests: "NOTIFY GUESTS".', inputSchema: z.object({
       calendarId: z.string(), resourceId: z.string(), etag: z.string().min(1),
+      confirmGuests,
       occurrence: z.string().datetime({ offset: true }).optional(),
-      scope: z.enum(['occurrence', 'thisAndFollowing']).default('occurrence'),
+      scope: SCOPES,
       title: z.string().min(1).max(500).optional(),
-      start: z.string().datetime({ offset: true }).optional(),
-      end: z.string().datetime({ offset: true }).optional(),
+      start: when.optional(),
+      end: when.optional(),
+      rrule: rrule.optional(),
       location: z.string().optional(),
       description: z.string().optional(),
-    }) }, async ({ calendarId, resourceId, etag, occurrence, scope, title, start, end, location, description }) => {
+    }) }, async ({ calendarId, resourceId, etag, confirmGuests, occurrence, scope, title, start, end, rrule, location, description }) => {
       try {
         const client = await dav();
         const { object } = await getObject(client, calendarId, resourceId);
         const root = prepareCalendar(object.data);
         const events = root.getAllSubcomponents('vevent');
-        if (occurrence !== undefined) {
-          if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
-          if (events.some(e => e.hasProperty('attendee') || e.hasProperty('organizer'))) throw new RangeError('Invitation edits refused');
-          const changes = { title, start, end, location, description };
-          if (scope === 'thisAndFollowing') {
-            const calendar = await lookupCalendar(client, calendarId);
-            const id = crypto.randomUUID();
-            const split = splitSeriesAt(root, occurrence, changes, id + '@private-caldav-mcp');
-            const newResourceId = resourceUrl(calendar.url, id);
-            // The new series is created first: if the old one then cannot be shortened, the new one is
-            // removed again, and at worst the later occurrences exist twice rather than not at all.
-            await checkWrite(await client.createCalendarObject({ calendar, filename: `${id}.ics`, iCalString: split.created, headers: { 'If-None-Match': '*' } }));
-            try {
-              await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: split.current } }));
-            } catch (e) {
-              await client.deleteCalendarObject({ calendarObject: { url: newResourceId } as typeof object }).catch(() => undefined);
-              throw e;
-            }
-            return result({ updated: true, resourceId, newResourceId, occurrence, scope });
-          }
-          await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: editOccurrence(root, occurrence, changes) } }));
+        if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
+        guestsNeedConfirmation(events, confirmGuests);
+        const changes = { title, start, end, rrule, location, description };
+        const save = async (data: string) => { await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data } })); };
+        if (!isSeries(events)) {
+          if (events.length !== 1 || occurrence !== undefined) throw new RangeError('Not a repeating event');
+          await save(editOneOff(root, changes));
+          return result({ updated: true, resourceId });
+        }
+        if (scope === 'entireSeries') {
+          if (occurrence !== undefined) throw new RangeError('entireSeries takes no occurrence');
+          await save(editSeries(root, changes));
+          return result({ updated: true, resourceId, scope });
+        }
+        if (occurrence === undefined) throw new RangeError('occurrence is required for this scope');
+        if (scope === 'occurrence') {
+          await save(editOccurrence(root, occurrence, changes));
           return result({ updated: true, resourceId, occurrence });
         }
-        if (scope === 'thisAndFollowing') throw new RangeError('occurrence is required for scope thisAndFollowing');
-        if (events.length !== 1 || isSeries(events)) throw new RangeError('Recurring event edit refused');
-        const ev = events[0];
-        if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
-        if (ev.hasProperty('attendee') || ev.hasProperty('organizer') || (ev.getFirstPropertyValue('dtstart') as ICAL.Time)?.isDate) throw new RangeError('Invitation or all-day edits refused');
-        if ((start !== undefined || end !== undefined) && ev.hasProperty('duration')) throw new RangeError('Duration-based time edits refused');
-        ev.updatePropertyWithValue('dtstamp', ICAL.Time.fromJSDate(new Date(), true));
-        ev.updatePropertyWithValue('sequence', Number(ev.getFirstPropertyValue('sequence') || 0) + 1);
-        if (title !== undefined) ev.updatePropertyWithValue('summary', title);
-        if (start !== undefined) setTime(ev, 'dtstart', ICAL.Time.fromJSDate(new Date(start), true));
-        if (end !== undefined) setTime(ev, 'dtend', ICAL.Time.fromJSDate(new Date(end), true));
-        if (location !== undefined) ev.updatePropertyWithValue('location', location);
-        if (description !== undefined) ev.updatePropertyWithValue('description', description);
-        const st = ev.getFirstPropertyValue('dtstart') as ICAL.Time;
-        const en = ev.getFirstPropertyValue('dtend') as ICAL.Time;
-        if (st && en && en.compare(st) <= 0) throw new RangeError('End must be after start');
-        await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: root.toString() } }));
-        return result({ updated: true, resourceId });
+        const calendar = await lookupCalendar(client, calendarId);
+        const id = crypto.randomUUID();
+        const split = splitSeriesAt(root, occurrence, changes, id + '@private-caldav-mcp');
+        if (!split.created) {
+          await save(split.current);
+          return result({ updated: true, resourceId, occurrence, scope });
+        }
+        const newResourceId = resourceUrl(calendar.url, id);
+        // The new series is created first: if the old one then cannot be shortened, the new one is
+        // removed again, and at worst the later occurrences exist twice rather than not at all.
+        await checkWrite(await client.createCalendarObject({ calendar, filename: `${id}.ics`, iCalString: split.created, headers: { 'If-None-Match': '*' } }));
+        try {
+          await save(split.current);
+        } catch (e) {
+          await client.deleteCalendarObject({ calendarObject: { url: newResourceId } as typeof object }).catch(() => undefined);
+          throw e;
+        }
+        return result({ updated: true, resourceId, newResourceId, occurrence, scope });
       } catch (e) { return failure(e); }
     });
 
-    this.server.registerTool('delete_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Delete a calendar event resource. This operation is irreversible and must be explicitly requested by the user. Recurring series require explicit acknowledgement. To cancel one occurrence of a series, pass occurrence (its start, as listed by list_events) instead; the rest of the series is kept. With scope thisAndFollowing, that occurrence and every later one are removed by ending the series before it.', inputSchema: z.object({
+    this.server.registerTool('delete_event', { annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, description: 'Delete a calendar event resource. This operation is irreversible and must be explicitly requested by the user. Recurring series require explicit acknowledgement. To cancel one occurrence of a series, pass occurrence (its start, as listed by list_events) instead; the rest of the series is kept. With scope thisAndFollowing, that occurrence and every later one are removed by ending the series before it. Deleting an event that has guests can email them a cancellation: ask the user first, then pass confirmGuests: "NOTIFY GUESTS".', inputSchema: z.object({
       calendarId: z.string(), resourceId: z.string(),
       etag: z.string().min(1),
+      confirmGuests,
       confirm: z.literal('DELETE'),
       confirmEntireSeries: z.boolean().default(false),
       occurrence: z.string().datetime({ offset: true }).optional(),
       scope: z.enum(['occurrence', 'thisAndFollowing']).default('occurrence'),
-    }) }, async ({ calendarId, resourceId, etag, confirmEntireSeries, occurrence, scope }) => {
+    }) }, async ({ calendarId, resourceId, etag, confirmGuests, confirmEntireSeries, occurrence, scope }) => {
       try {
         const client = await dav();
         const { object } = await getObject(client, calendarId, resourceId);
         const root = prepareCalendar(object.data);
         const events = root.getAllSubcomponents('vevent');
         if (!object.etag || object.etag !== etag) throw new RangeError('Event changed; read again');
-        if (events.some(e => e.hasProperty('attendee') || e.hasProperty('organizer'))) throw new RangeError('Invitation deletion refused');
+        guestsNeedConfirmation(events, confirmGuests);
         if (occurrence !== undefined) {
           if (confirmEntireSeries) throw new RangeError('Choose either one occurrence or the entire series');
           if (scope === 'thisAndFollowing') {
-            await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: endSeriesBefore(root, occurrence) } }));
+            const ended = endSeriesBefore(root, occurrence);
+            if (ended === null) {
+              await checkWrite(await client.deleteCalendarObject({ calendarObject: object }));
+              return result({ deleted: true, resourceId, occurrence, scope });
+            }
+            await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: ended } }));
             return result({ cancelled: true, resourceId, occurrence, scope });
           }
           await checkWrite(await client.updateCalendarObject({ calendarObject: { ...object, data: cancelOccurrence(root, occurrence) } }));

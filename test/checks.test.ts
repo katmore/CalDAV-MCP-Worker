@@ -1,6 +1,6 @@
 import {describe, test} from 'vitest';
 import assert from 'node:assert/strict';
-import {assertResource,checkWrite,creationResult,isAllowedLogin,isSeries,prepareCalendar,sameResource} from '../src/safety';
+import {assertResource,checkWrite,creationResult,isAllowedLogin,isSeries,prepareCalendar,sameResource} from '../src/checks';
 
 const ics=(...lines:string[])=>['BEGIN:VCALENDAR','VERSION:2.0',...lines,'END:VCALENDAR',''].join('\r\n');
 const vevent=(...lines:string[])=>['BEGIN:VEVENT',...lines,'END:VEVENT'].join('\r\n');

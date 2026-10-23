@@ -30,8 +30,8 @@ replaced by fakes, and every secret has a test-only value in
 
 | File | Covers |
 | --- | --- |
-| `test/safety.test.ts` | The owner check; the calendar boundary, one test per rule (other hosts, ports, `http`, credentials, query strings, fragments, `..` and encoded slashes, nested folders, non-`.ics` files, look-alike sibling folders); refused saves never counting as success; what counts as a repeating event; timezones staying inside the event that defines them |
-| `test/calendar.test.ts` | All six calendar tools against a fake calendar server: what is written and where, the version sent with each change, refused saves, edits keeping alarms and unknown fields, the refusal rules for repeating events, cancelling or editing a single occurrence or "this and following", all-day events and invitations, the `capped` flag, the 90-day, 250-event and 500-occurrence limits, input validation (including that deletes need `confirm: "DELETE"`), the read-only and destructive markers on each tool, and error messages that hide internal details |
+| `test/checks.test.ts` | The owner check; the calendar boundary, one test per rule (other hosts, ports, `http`, credentials, query strings, fragments, `..` and encoded slashes, nested folders, non-`.ics` files, look-alike sibling folders); refused saves never counting as success; what counts as a repeating event; timezones staying inside the event that defines them |
+| `test/calendar.test.ts` | All six calendar tools against a fake calendar server: what is written and where, the version sent with each change, refused saves, edits keeping alarms and unknown fields, creating timed, all-day and repeating events (including the timezone definition, checked in five zones with different daylight-saving rules), editing one-off events, all-day events and events stored with a duration, changing one occurrence, this and following, or a whole series (including cancelled dates and edited occurrences moving with a series, and the new half of a split being removed again if the old half can't be shortened), the confirmations for deletes, whole-series deletes and events with guests, the `capped` flag, the 90-day, 250-event and 500-occurrence limits, input validation, the read-only and destructive markers on each tool, and error messages that hide internal details |
 | `test/oauth-utils.test.ts` | Sign-in building blocks: CSRF tokens, sign-in state kept in a signed, expiring cookie tied to the browser that started it (forged, edited, expired and mismatched cookies are refused, and nothing is written to KV), the signed "approved apps" cookie (including forged and foreign cookies), HTML escaping and link filtering on the approval page, and the GitHub token exchange |
 | `test/github-handler.test.ts` | The sign-in pages: approval, the GitHub callback, refusing any GitHub account but the owner, failed GitHub responses, replayed or cross-browser callbacks, and hidden internal errors |
 | `test/transport.test.ts` | The CalDAV network boundary, using the real CalDAV client against a fake network: `CALDAV_URL` must be https; discovery, server-listed addresses and every redirect step stay on https and on trusted hosts; the network is never left to follow redirects unchecked; refusals are reported without addresses or credentials; create, update and delete still send their version checks |
@@ -51,7 +51,7 @@ replaced by fakes, and every secret has a test-only value in
 ### Checking the tests themselves
 
 Full coverage only shows that code ran. To check the tests would notice a
-safety rule breaking, each rule was broken on purpose and a test had to fail. Each of these breakages was caught:
+rule breaking, each rule was broken on purpose and a test had to fail. Each of these breakages was caught:
 
 - saves refused by the server reported as success (create, update, delete)
 - calendar boundary rules removed (fragments, non-`.ics` files, credentials, backslashes)
@@ -65,6 +65,12 @@ safety rule breaking, each rule was broken on purpose and a test had to fail. Ea
   side, or a counted series not divided between the two halves
 - the new half of a split series left behind when the old half can't be shortened
 - a moved time keeping the old timezone on a UTC value
+- moving a series leaving its cancelled dates, extra dates or edited occurrences behind
+- a cancelled occurrence keeping its edited copy
+- a series edit dropping the series' timezone
+- a generated timezone missing its later daylight-saving changes, or labelling
+  summer and winter time the wrong way round
+- the confirmation for events with guests removed
 - event lists no longer sorted
 - error messages revealing internal details
 - one event's timezone affecting others
@@ -162,14 +168,12 @@ new version, repeat it with the prompts in the README's
 
 - Only iCloud has been tested live. Other CalDAV providers are untested.
 - Repeating events, timezones and all-day events are tested with sample data
-  only. Cancelling one occurrence of a weekly iPhone-made event in a saved
-  timezone, after the November daylight-saving change, was checked live on
-  iCloud and in the iPhone Calendar app. Renaming one occurrence and moving
-  another, on the same kind of event, was checked the same way. Splitting a
-  series ("this and following") and ending a series early were checked the same
-  way. Series from other apps were not, and neither was the clean-up when
-  the old half of a split series can't be shortened (that is tested with a fake
-  server only). Treat results flagged `capped` as incomplete.
-- Editing a whole repeating series, all-day events and invitations is refused
-  on purpose. Splitting a series is refused at its first occurrence and for
-  series with extra dates or exclusion rules.
+  and, for the main cases below, against iCloud and the iPhone Calendar app.
+  Checked live: cancelling one occurrence, renaming one, moving one, splitting a
+  series ("this and following") and ending a series early, all on weekly events
+  made in the iPhone Calendar app, in a saved timezone, across the November
+  daylight-saving change. Not checked live: creating events (all-day or
+  repeating, with a generated timezone), editing a whole series, moving or
+  changing the rule of a series, all-day events, events with guests, series
+  made by other apps, and the clean-up when the old half of a split series can't
+  be shortened (fake server only). Treat results flagged `capped` as incomplete.

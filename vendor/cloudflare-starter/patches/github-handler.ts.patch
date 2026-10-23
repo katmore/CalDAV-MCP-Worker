@@ -6,7 +6,7 @@
  import { Hono } from "hono";
 -import { Octokit } from "octokit";
  import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, type Props } from "./utils";
-+import { isAllowedLogin } from "./safety";
++import { isAllowedLogin } from "./checks";
  import {
  	addApprovedClient,
 -	bindStateToSession,

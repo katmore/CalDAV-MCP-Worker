@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import type { AuthRequest, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
 import { fetchUpstreamAuthToken, getUpstreamAuthorizeUrl, type Props } from "./utils";
-import { isAllowedLogin } from "./safety";
+import { isAllowedLogin } from "./checks";
 import {
 	addApprovedClient,
 	createOAuthState,

@@ -2,7 +2,7 @@ import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import { createMcpHandler } from 'agents/mcp/server';
 import { CalendarServer, type CalendarEnv, type Props } from './calendar';
 import { GitHubHandler } from './github-handler';
-import { isAllowedLogin } from './safety';
+import { isAllowedLogin } from './checks';
 
 const options = {
   apiHandler: { async fetch(request: Request, env: Env & CalendarEnv, ctx: ExecutionContext) {
