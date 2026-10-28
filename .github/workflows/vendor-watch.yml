@@ -1,7 +1,8 @@
 # Checks weekly whether Cloudflare has changed the starter files this project copies
 # (see vendor/cloudflare-starter). If they have, it opens an issue, or comments on the
-# open one, so the change can be reviewed. If the check itself breaks, the run fails and
-# GitHub emails a failure notice instead.
+# open one, and fails the run so the README badge goes red until the changes are taken
+# (`npm run vendor:pull`, see VALIDATION.md). Once the copy matches again it closes the
+# issue. If the check itself breaks, the run fails and GitHub emails a failure notice.
 name: Watch Cloudflare starter
 
 on:
@@ -34,7 +35,7 @@ jobs:
           echo "status=$status" >> "$GITHUB_OUTPUT"
           case $status in
             0) echo "Upstream unchanged." ;;
-            3) echo "Upstream has changed; an issue will be opened or updated." ;;
+            3) echo "Upstream has changed; an issue will be opened or updated and this run will fail." ;;
             *) echo "::error::The upstream check failed; see the log above."; exit 1 ;;
           esac
 
@@ -66,4 +67,22 @@ jobs:
             gh issue comment "$existing" --body-file body.md
           else
             gh issue create --title "$title" --body-file body.md
+          fi
+
+      - name: Fail until the changes are taken
+        if: steps.verify.outputs.status == '3'
+        run: |
+          echo "::error::Cloudflare has changed files this project copies. See the open issue, then run npm run vendor:pull."
+          exit 1
+
+      - name: Close the issue once the copy is current
+        if: steps.verify.outputs.status == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title='Cloudflare starter files changed upstream'
+          existing=$(gh issue list --state open --search "in:title \"$title\"" --json number,title \
+            --jq "map(select(.title == \"$title\"))[0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "The copied files match Cloudflare's again, so this is resolved."
           fi

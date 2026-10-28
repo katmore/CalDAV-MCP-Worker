@@ -151,7 +151,7 @@
  	const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
 @@ -179,7 +181,6 @@
  		},
- 		// This will be available on this.props inside MyMCP
+ 		// This will be available through getMcpAuthContext() in MCP handlers.
  		props: {
 -			accessToken,
  			email,

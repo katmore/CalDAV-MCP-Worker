@@ -9,6 +9,9 @@
 // Commands:
 //   check    (offline) upstream + patches must reproduce src/ exactly. Run by `npm test`.
 //   update   regenerate patches/ from the current src/ after an intentional edit.
+//   pull     (online) move to the latest upstream commit: re-download upstream/, re-apply this
+//            project's patches on top, update src/ and SOURCE.json. Fails, changing nothing,
+//            if a patch no longer applies cleanly.
 //   verify   (online) upstream/ must match the recorded commit, and the files must be
 //            unchanged upstream since then. Exits 1 if a copy was edited or something
 //            went wrong, and 3 if the only finding is that upstream has changed, so a
@@ -72,6 +75,37 @@ function update() {
   }
 }
 
+async function pull() {
+  for (const v of vendors) {
+    const response = await fetch(`https://api.github.com/repos/${v.source.repository}/commits/${v.source.branch}`, { headers: { Accept: 'application/vnd.github+json' } });
+    if (!response.ok) throw new Error(`could not look up ${v.source.branch} on ${v.source.repository}: HTTP ${response.status}`);
+    const { sha } = await response.json();
+    // Work everything out first so a patch that no longer applies leaves the repository untouched.
+    const results = [];
+    for (const [file, target] of Object.entries(v.source.files)) {
+      const upstream = await fetchRaw(v.source, sha, file);
+      const work = mkdtempSync(join(tmpdir(), 'vendor-'));
+      try {
+        writeFileSync(join(work, file), upstream);
+        if (existsSync(patchPath(v, file))) execFileSync('git', ['apply', '-p1', patchPath(v, file)], { cwd: work, stdio: 'pipe' });
+        results.push({ file, target, upstream, patched: readFileSync(join(work, file), 'utf8') });
+      } catch (e) {
+        throw new Error(`${v.name}: the patch for ${file} no longer applies to ${sha.slice(0, 7)}; to merge it by hand, copy the new files into upstream/, make the same changes in src/, set the commit in SOURCE.json and run vendor:update (${e.stderr?.toString().trim() || e.message})`);
+      } finally {
+        rmSync(work, { recursive: true, force: true });
+      }
+    }
+    for (const { file, target, upstream, patched } of results) {
+      writeFileSync(join(v.dir, 'upstream', file), upstream);
+      writeFileSync(join(root, target), patched);
+    }
+    v.source.commit = sha;
+    writeFileSync(join(v.dir, 'SOURCE.json'), JSON.stringify(v.source, null, 2) + '\n');
+    ok(`${v.name}: now at ${sha.slice(0, 7)}`);
+  }
+  update();
+}
+
 async function fetchRaw(source, ref, file) {
   const url = `https://raw.githubusercontent.com/${source.repository}/${ref}/${source.path}/${file}`;
   const response = await fetch(url);
@@ -95,5 +129,6 @@ const command = process.argv[2];
 if (command === 'check') check();
 else if (command === 'update') update();
 else if (command === 'verify') await verify();
-else { console.error('usage: vendor.mjs check | update | verify'); process.exit(2); }
+else if (command === 'pull') await pull();
+else { console.error('usage: vendor.mjs check | update | pull | verify'); process.exit(2); }
 process.exit(failed ? 1 : upstreamChanged ? 3 : 0);
