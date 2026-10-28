@@ -21,8 +21,7 @@ The same command runs on GitHub for every push and pull request
 (`.github/workflows/tests.yml`). The README's badges come from outside the code:
 the Tests badge is GitHub's status for that workflow on `main`; the Coverage
 badge is Codecov's, from the coverage report the workflow uploads on every
-run; the starter watch badge is the weekly check's last result; and the licence
-badge is the licence GitHub detects in the repository.
+run; and the starter watch badge is the weekly check's last result.
 
 The "Latest results" section below is not written by hand: the same workflow
 generates it from the test and coverage reports on every push to `main` (see
