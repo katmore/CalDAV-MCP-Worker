@@ -25,7 +25,7 @@ export default defineConfig({
       provider: 'istanbul',
       include: ['src/**/*.ts'],
       exclude: ['src/env.d.ts'],
-      reporter: ['text', 'html'],
+      reporter: ['text', 'html', 'json-summary'],
       // Every line, statement, function and branch in src/ must be exercised.
       thresholds: { lines: 100, statements: 100, functions: 100, branches: 100 },
     },
