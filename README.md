@@ -1,12 +1,9 @@
 # CalDAV MCP Worker
 
 [![Tests](https://github.com/katmore/CalDAV-MCP-Worker/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/katmore/CalDAV-MCP-Worker/actions/workflows/tests.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkatmore%2FCalDAV-MCP-Worker%2Fbadges%2Fcoverage.json)](VALIDATION.md#automated-tests)
+[![Coverage](https://codecov.io/gh/katmore/CalDAV-MCP-Worker/graph/badge.svg)](https://codecov.io/gh/katmore/CalDAV-MCP-Worker)
 [![Cloudflare starter watch](https://github.com/katmore/CalDAV-MCP-Worker/actions/workflows/vendor-watch.yml/badge.svg)](https://github.com/katmore/CalDAV-MCP-Worker/actions/workflows/vendor-watch.yml)
 [![License](https://img.shields.io/github/license/katmore/CalDAV-MCP-Worker)](LICENSE)
-[![TypeScript](https://img.shields.io/github/package-json/dependency-version/katmore/CalDAV-MCP-Worker/dev/typescript?logo=typescript&logoColor=white)](package.json)
-[![Wrangler](https://img.shields.io/github/package-json/dependency-version/katmore/CalDAV-MCP-Worker/dev/wrangler?logo=cloudflare&logoColor=white)](package.json)
-[![MCP SDK](https://img.shields.io/github/package-json/dependency-version/katmore/CalDAV-MCP-Worker/@modelcontextprotocol/server)](package.json)
 
 Let an AI assistant such as ChatGPT or Claude read and manage your calendar.
 You deploy this small server to your own Cloudflare account and connect your

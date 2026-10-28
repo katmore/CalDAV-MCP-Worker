@@ -18,13 +18,11 @@ the deployed Worker, using Vitest and Cloudflare's Vitest plugin. It fails if:
   [Copied starter code](#copied-starter-code)).
 
 The same command runs on GitHub for every push and pull request
-(`.github/workflows/tests.yml`). The README's badges all come from outside the
-code: the Tests badge is GitHub's status for that workflow on `main`; the
-Coverage badge is made by the same workflow from the coverage report of the
-latest run on `main` (a separate job publishes just that file to the `badges`
-branch, and `scripts/coverage-badge.mjs` shows the lowest of the four figures,
-rounded down); the starter watch badge is the weekly check's last result; and
-the licence and version badges are read from GitHub and `package.json`.
+(`.github/workflows/tests.yml`). The README's badges come from outside the code:
+the Tests badge is GitHub's status for that workflow on `main`; the Coverage
+badge is Codecov's, from the coverage report the workflow uploads on every
+run; the starter watch badge is the weekly check's last result; and the licence
+badge is the licence GitHub detects in the repository.
 
 Nothing in the tests reaches a real account. The calendar server and GitHub are
 replaced by fakes, and every secret has a test-only value in
