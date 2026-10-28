@@ -46,3 +46,11 @@ not in the script.
 The tests run inside Cloudflare's runtime, which can't write files. One test attaches the
 tool definitions to its result, and `docs-reporter.mjs`, a Vitest reporter that runs in
 plain Node, writes them to `test-results/tools.json`.
+
+## Badges
+
+A badge may only be green when the thing it names is true. `check-badges.mjs` runs as part of
+`npm test` and fails if the README has any badge that isn't from GitHub's workflow status,
+Codecov, or shields.io reading the GitHub API. A static label fails the build. When adding a
+badge, say in the commit what turns it red and make sure that state can't happen while it is
+green.

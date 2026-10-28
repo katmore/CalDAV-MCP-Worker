@@ -40,7 +40,9 @@ jobs:
         with:
           files: coverage/lcov.info
           use_oidc: true
-          fail_ci_if_error: false # a Codecov outage should not fail the build
+          # A failed upload on main would leave the badge showing an old number, so it fails the run.
+          # Pull requests (Dependabot's can't sign in to Codecov) are allowed to skip it.
+          fail_ci_if_error: ${{ github.event_name == 'push' }}
       - name: Refresh the generated docs
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: npm run docs

@@ -11,7 +11,7 @@
     "start": "wrangler dev -c wrangler.local.jsonc",
     "cf-typegen": "wrangler types",
     "type-check": "tsc --noEmit",
-    "test": "node scripts/vendor.mjs check && vitest run --coverage",
+    "test": "node scripts/vendor.mjs check && node dev/check-badges.mjs && vitest run --coverage",
     "vendor:check": "node scripts/vendor.mjs check",
     "vendor:update": "node scripts/vendor.mjs update",
     "vendor:pull": "node scripts/vendor.mjs pull",
