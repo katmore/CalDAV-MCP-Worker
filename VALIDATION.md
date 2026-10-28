@@ -9,7 +9,7 @@ on the code copied from Cloudflare, and a manual test against a live calendar.
 npm test
 ```
 
-This runs about 150 tests inside workerd, the same runtime Cloudflare uses for
+This runs the tests inside workerd, the same runtime Cloudflare uses for
 the deployed Worker, using Vitest and Cloudflare's Vitest plugin. It fails if:
 
 - any test fails,
