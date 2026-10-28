@@ -63,14 +63,95 @@ AI assistant ──MCP──▶ your Worker ──CalDAV──▶ your calendar 
 
 ### Tools
 
-| Tool | What it does |
-| --- | --- |
-| `list_calendars` | List the calendars on the connected CalDAV account |
-| `list_events` | List events in one calendar over a date range (max 90 days), with repeating events expanded |
-| `get_event` | Read one event with all its details |
-| `create_event` | Create a timed or all-day event, optionally repeating (`rrule`) and in a named `timezone` |
-| `update_event` | Change an event's title, start, end, location, description or repeat rule. For a repeating event, change one occurrence, an occurrence and all later ones, or the whole series |
-| `delete_event` | Delete an event, cancel one occurrence of a repeating event, or end a repeating event from one occurrence on |
+<!-- docs tools -->
+_Generated from the server's own tool definitions by `npm run docs` (see [dev/README.md](dev/README.md)). Don't edit it by hand._
+
+#### `list_calendars`
+
+_Reads your calendar._
+
+Read calendars accessible to the connected CalDAV account.
+
+_No parameters._
+
+#### `list_events`
+
+_Reads your calendar._
+
+Read events from one calendar in a date interval. Recurring series are expanded with exception handling; a capped=true result is incomplete and must not be used to judge availability.
+
+| Parameter | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `calendarId` | string | yes |  |
+| `start` | date-time | yes |  |
+| `end` | date-time | yes |  |
+
+#### `get_event`
+
+_Reads your calendar._
+
+Read one full iCalendar resource (includes recurrence exceptions and alarms).
+
+| Parameter | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `calendarId` | string | yes |  |
+| `resourceId` | string | yes |  |
+
+#### `create_event`
+
+_Adds to your calendar._
+
+Create an event. Timed: start and end as date-times with an offset. All-day: start (and optionally end, the last day, inclusive) as YYYY-MM-DD dates. To make it repeat pass rrule, such as FREQ=WEEKLY;BYDAY=MO or FREQ=MONTHLY;BYDAY=1SA;COUNT=12. For a repeating timed event also pass timezone (an IANA name such as America/Los_Angeles) so it stays at the same local time across daylight saving. Never create without the user explicitly asking for it.
+
+| Parameter | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `calendarId` | string | yes |  |
+| `title` | string | yes |  |
+| `start` | date-time or date (`YYYY-MM-DD`) | yes |  |
+| `end` | date-time or date (`YYYY-MM-DD`) | no |  |
+| `timezone` | string | no |  |
+| `rrule` | string | no |  |
+| `location` | string | no |  |
+| `description` | string | no |  |
+
+#### `update_event`
+
+_Changes or deletes events._
+
+Update an event: title, start, end, location, description, and rrule (to change how it repeats, or to make a one-off repeat). Dates for all-day events are YYYY-MM-DD, and end is the last day. For a repeating event choose scope: occurrence (just the one in occurrence, its start as listed by list_events), thisAndFollowing (that occurrence and every later one), or entireSeries (the whole series; do not pass occurrence). Moving only start keeps the length. Changing an event that has guests can email them an update: ask the user first, then pass confirmGuests: "NOTIFY GUESTS".
+
+| Parameter | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `calendarId` | string | yes |  |
+| `resourceId` | string | yes |  |
+| `etag` | string | yes |  |
+| `confirmGuests` | `"NOTIFY GUESTS"` | no |  |
+| `occurrence` | date-time | no |  |
+| `scope` | `"occurrence"` or `"thisAndFollowing"` or `"entireSeries"` | yes | default `"occurrence"` |
+| `title` | string | no |  |
+| `start` | date-time or date (`YYYY-MM-DD`) | no |  |
+| `end` | date-time or date (`YYYY-MM-DD`) | no |  |
+| `rrule` | string | no |  |
+| `location` | string | no |  |
+| `description` | string | no |  |
+
+#### `delete_event`
+
+_Changes or deletes events._
+
+Delete a calendar event resource. This operation is irreversible and must be explicitly requested by the user. Recurring series require explicit acknowledgement. To cancel one occurrence of a series, pass occurrence (its start, as listed by list_events) instead; the rest of the series is kept. With scope thisAndFollowing, that occurrence and every later one are removed by ending the series before it. Deleting an event that has guests can email them a cancellation: ask the user first, then pass confirmGuests: "NOTIFY GUESTS".
+
+| Parameter | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `calendarId` | string | yes |  |
+| `resourceId` | string | yes |  |
+| `etag` | string | yes |  |
+| `confirmGuests` | `"NOTIFY GUESTS"` | no |  |
+| `confirm` | `"DELETE"` | yes |  |
+| `confirmEntireSeries` | boolean | yes | default `false` |
+| `occurrence` | date-time | no |  |
+| `scope` | `"occurrence"` or `"thisAndFollowing"` | yes | default `"occurrence"` |
+<!-- /docs -->
 
 Dates for all-day events are plain `YYYY-MM-DD`, and an end date is the last
 day included. Times for timed events carry an offset, such as

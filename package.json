@@ -15,7 +15,8 @@
     "vendor:check": "node scripts/vendor.mjs check",
     "vendor:update": "node scripts/vendor.mjs update",
     "vendor:verify": "node scripts/vendor.mjs verify",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "docs": "node dev/refresh-docs.mjs"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.8.3",
@@ -31,6 +32,7 @@
     "@cloudflare/vitest-plugin": "1.4.6",
     "@cloudflare/workers-types": "5.20261021.1",
     "@vitest/coverage-istanbul": "4.1.12",
+    "markdown-magic": "4.11.0",
     "typescript": "6.0.3",
     "vitest": "4.1.12",
     "wrangler": "4.151.3"

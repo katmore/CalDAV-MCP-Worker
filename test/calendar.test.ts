@@ -1,6 +1,7 @@
 import {describe, test} from 'vitest';
 import assert from 'node:assert/strict';
 import ICAL from 'ical.js';
+import {z} from 'zod';
 import {CalendarServer} from '../src/calendar';
 
 const CAL='https://calendar.example.test/1/calendars/home/';
@@ -100,6 +101,16 @@ describe('access',()=> {
 });
 
 describe('tool definitions',()=> {
+ // Not a check: hands the tool definitions to the docs generator (see dev/docs-reporter.mjs).
+ test('publishes the tool definitions for the docs',async({task})=> {
+  const {registered}=await tools();
+  (task.meta as any).tools=Object.entries(registered).map(([name,{config}])=>({
+   name,description:config.description,annotations:config.annotations,
+   parameters:JSON.parse(JSON.stringify(z.toJSONSchema(config.inputSchema))),
+  }));
+  assert.equal(Object.keys(registered).length,6);
+ });
+
  test('read tools are marked read-only and change tools as such',async()=> {
   const {registered}=await tools();
   const hints=Object.fromEntries(Object.entries(registered).map(([n,{config}])=>[n,[config.annotations.readOnlyHint,config.annotations.destructiveHint]]));
